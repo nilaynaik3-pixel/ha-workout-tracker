@@ -1,0 +1,69 @@
+# Workout tracker config.
+# Starter exercise list. Add or hide exercises from the Workout page;
+# those changes are saved in the database, so you never need to edit this file.
+#
+# Exercise names are the keys stored in the log, so renaming one later
+# starts a fresh history for it.
+
+defaults:
+  sets: 3        # target sets
+  reps: 15       # target reps per set
+  step: 2.5      # kg added on an "increase"
+
+groups:
+  # Rotated: each day suggests the one you trained least recently.
+  main: [chest, shoulders, back, legs]
+  # Always combined with a main group; the least recent one is suggested.
+  addon: [biceps, triceps, abs]
+
+# step = the smallest weight jump on that equipment.
+#   barbells 2.5 (1.25 kg plate each side), dumbbells 2, machines/stacks 5.
+#   Change any that don't match your gym.
+# Bodyweight exercises: log 0 kg, progress is tracked on reps.
+exercises:
+  # Chest
+  Incline Barbell Bench Press: {group: chest, step: 2.5}
+  Dumbbell Bench Press:        {group: chest, step: 2}
+  Chest Press Machine:         {group: chest, step: 5}
+  Pec Deck:                    {group: chest, step: 5}
+
+  # Shoulders
+  Overhead Barbell Press:      {group: shoulders, step: 2.5}
+  Shoulder Press Machine:      {group: shoulders, step: 5}
+  Dumbbell Lateral Raise:      {group: shoulders, step: 2}
+  Lateral Raise Machine:       {group: shoulders, step: 5}
+  Front Raise:                 {group: shoulders, step: 2}
+  Shrugs:                      {group: shoulders, step: 2}
+
+  # Back
+  Lat Pulldown:                {group: back, step: 5}
+  Close-Grip Pulldown:         {group: back, step: 5}
+  Seated Cable Row:            {group: back, step: 5}
+  Seated Row Machine:          {group: back, step: 5}
+  Back Extension:              {group: back, step: 2.5}
+
+  # Legs
+  Leg Press:                   {group: legs, step: 5}
+  Leg Extension:               {group: legs, step: 5}
+  Seated Leg Curl:             {group: legs, step: 5}
+  Hip Abductor:                {group: legs, step: 5}
+  Hip Adductor:                {group: legs, step: 5}
+  Standing Calf Raise:         {group: legs, step: 5}
+
+  # Biceps
+  Barbell Curl:                {group: biceps, step: 2.5}
+  Dumbbell Curl:               {group: biceps, step: 2}
+  Biceps Curl Machine:         {group: biceps, step: 5}
+  Hammer Curl:                 {group: biceps, step: 2}
+  Incline Dumbbell Curl:       {group: biceps, step: 2}
+
+  # Triceps
+  Cable Pushdown:              {group: triceps, step: 2.5}
+  Rope Pushdown:               {group: triceps, step: 2.5}
+  Overhead Dumbbell Extension: {group: triceps, step: 2}
+  Triceps Extension Machine:   {group: triceps, step: 5}
+  Dips:                        {group: triceps, step: 5}
+
+  # Abs
+  Crunches:                    {group: abs, step: 2.5}
+  Hanging Leg Raise:           {group: abs, step: 2.5}

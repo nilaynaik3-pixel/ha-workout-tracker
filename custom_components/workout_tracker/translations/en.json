@@ -1,0 +1,45 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Workout Tracker",
+        "description": "Adds a Workout page to the sidebar. Everyone in your home gets their own profile, based on their Home Assistant user. Gym tracking is optional: pick your gym zone; each person's phone is found through their person entity.",
+        "data": {
+          "days_per_week": "Training days per week (your weekly target)",
+          "gym_zone": "Gym zone (optional)",
+          "person": "Person to track for this user (optional, picked automatically if empty)",
+          "notify": "Notifications",
+          "min_visit_minutes": "Ignore gym stays shorter than",
+          "owner": "Your existing workout data belongs to"
+        },
+        "data_description": {
+          "gym_zone": "Create one first under Settings > Areas, labels & zones > Zones if you don't have it.",
+          "notify": "auto = the tracked person's phone, off = none, or a notify action such as notify.mobile_app_my_phone.",
+          "owner": "Every Home Assistant user gets their own profile. Any workouts already logged (e.g. from the earlier Pyscript version) go to this user. Others start fresh."
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Workout Tracker is already set up. Use Configure to change its settings."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Workout Tracker settings",
+        "data": {
+          "days_per_week": "Training days per week (your weekly target)",
+          "gym_zone": "Gym zone (optional)",
+          "person": "Person to track for this user (optional, picked automatically if empty)",
+          "notify": "Notifications",
+          "min_visit_minutes": "Ignore gym stays shorter than",
+          "owner": "Your existing workout data belongs to"
+        },
+        "data_description": {
+          "notify": "auto = the tracked person's phone, off = none, or a notify action such as notify.mobile_app_my_phone.",
+          "owner": "Every Home Assistant user gets their own profile. Any workouts already logged (e.g. from the earlier Pyscript version) go to this user. Others start fresh."
+        }
+      }
+    }
+  }
+}

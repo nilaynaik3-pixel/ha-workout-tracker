@@ -1,0 +1,21 @@
+{
+  "domain": "workout_tracker",
+  "name": "Workout Tracker",
+  "codeowners": [
+    "@nilaynaik3-pixel"
+  ],
+  "config_flow": true,
+  "dependencies": [
+    "http",
+    "frontend",
+    "panel_custom",
+    "websocket_api"
+  ],
+  "documentation": "https://github.com/nilaynaik3-pixel/ha-workout-tracker",
+  "integration_type": "service",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/nilaynaik3-pixel/ha-workout-tracker/issues",
+  "requirements": [],
+  "single_config_entry": true,
+  "version": "1.1.0"
+}

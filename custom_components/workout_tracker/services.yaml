@@ -1,0 +1,262 @@
+log_set:
+  name: Log a set
+  fields:
+    exercise:
+      name: Exercise
+      selector:
+        text: {}
+    weight:
+      name: Weight
+      selector:
+        number:
+          min: 0
+          max: 100000
+          step: 0.5
+          mode: box
+    reps:
+      name: Reps
+      selector:
+        number:
+          min: 0
+          max: 100000
+          step: 0.5
+          mode: box
+    rpe:
+      name: Rpe
+      selector:
+        number:
+          min: 0
+          max: 100000
+          step: 0.5
+          mode: box
+    warmup:
+      name: Warmup
+      selector:
+        boolean: {}
+rpe_all:
+  name: Same RPE for today's sets
+  fields:
+    exercise:
+      name: Exercise
+      selector:
+        text: {}
+    rpe:
+      name: Rpe
+      selector:
+        number:
+          min: 0
+          max: 100000
+          step: 0.5
+          mode: box
+    only_missing:
+      name: Only missing
+      selector:
+        boolean: {}
+undo:
+  name: Undo the last set
+  fields:
+    exercise:
+      name: Exercise
+      selector:
+        text: {}
+set_note:
+  name: Save an exercise note
+  fields:
+    exercise:
+      name: Exercise
+      selector:
+        text: {}
+    note:
+      name: Note
+      selector:
+        text: {}
+select_exercise:
+  name: Show an exercise
+  fields:
+    exercise:
+      name: Exercise
+      selector:
+        text: {}
+select_main:
+  name: Choose the main group
+  fields:
+    group:
+      name: Group
+      selector:
+        text: {}
+toggle_addon:
+  name: Turn an add-on group on or off
+  fields:
+    group:
+      name: Group
+      selector:
+        text: {}
+    'on':
+      name: 'On'
+      selector:
+        boolean: {}
+suggest:
+  name: Go back to today's suggested plan
+add_exercise:
+  name: Add an exercise
+  fields:
+    name:
+      name: Name
+      selector:
+        text: {}
+    group:
+      name: Group
+      selector:
+        text: {}
+    step:
+      name: Step
+      selector:
+        number:
+          min: 0
+          max: 100000
+          step: 0.5
+          mode: box
+hide_exercise:
+  name: Hide an exercise (history is kept)
+  fields:
+    exercise:
+      name: Exercise
+      selector:
+        text: {}
+set_day:
+  name: Log sets to another day
+  fields:
+    day:
+      name: Day
+      selector:
+        text: {}
+open_day:
+  name: Open a day in the calendar
+  fields:
+    day:
+      name: Day
+      selector:
+        text: {}
+update_set:
+  name: Change a logged set
+  fields:
+    set_id:
+      name: Set id
+      selector:
+        number:
+          min: 0
+          max: 100000
+          step: 0.5
+          mode: box
+    weight:
+      name: Weight
+      selector:
+        number:
+          min: 0
+          max: 100000
+          step: 0.5
+          mode: box
+    reps:
+      name: Reps
+      selector:
+        number:
+          min: 0
+          max: 100000
+          step: 0.5
+          mode: box
+    rpe:
+      name: Rpe
+      selector:
+        number:
+          min: 0
+          max: 100000
+          step: 0.5
+          mode: box
+    warmup:
+      name: Warmup
+      selector:
+        boolean: {}
+delete_set:
+  name: Delete a logged set
+  fields:
+    set_id:
+      name: Set id
+      selector:
+        number:
+          min: 0
+          max: 100000
+          step: 0.5
+          mode: box
+add_set:
+  name: Add a set to a day
+  fields:
+    day:
+      name: Day
+      selector:
+        text: {}
+    exercise:
+      name: Exercise
+      selector:
+        text: {}
+    weight:
+      name: Weight
+      selector:
+        number:
+          min: 0
+          max: 100000
+          step: 0.5
+          mode: box
+    reps:
+      name: Reps
+      selector:
+        number:
+          min: 0
+          max: 100000
+          step: 0.5
+          mode: box
+    rpe:
+      name: Rpe
+      selector:
+        number:
+          min: 0
+          max: 100000
+          step: 0.5
+          mode: box
+log_body:
+  name: Log a body measurement
+  fields:
+    metric:
+      name: Metric
+      selector:
+        text: {}
+    value:
+      name: Value
+      selector:
+        number:
+          min: 0
+          max: 100000
+          step: 0.5
+          mode: box
+    day:
+      name: Day
+      selector:
+        text: {}
+delete_body:
+  name: Delete a body measurement
+  fields:
+    entry_id:
+      name: Entry id
+      selector:
+        number:
+          min: 0
+          max: 100000
+          step: 0.5
+          mode: box
+gym_start:
+  name: Start a gym visit
+gym_end:
+  name: End the gym visit
+export:
+  name: Export everything to CSV
+refresh:
+  name: Reload the exercise list and settings
