@@ -22,6 +22,12 @@ Home Assistant.
 - **Fast logging**: weight and reps with +/-, effort (RPE 6-10) per set or for
   all sets at once, warm-up sets (the first set is marked as warm-up
   automatically), undo.
+- **Exercise demos**: start and end pictures of the movement shown in turn,
+  plus step-by-step instructions and the muscles worked, for 870+ exercises.
+- **Exercise library**: search it to add new exercises with their demo,
+  muscle group and weight step filled in.
+- **Rest timer** after every set, with -15/+15 s, a phone alert when the rest
+  is over, and a length you choose (or off).
 - **Progression advice** per exercise: go up, stay, or go down, from your last
   sessions and how hard they felt.
 - **Live personal-record alerts** for heaviest weight, best estimated
@@ -114,6 +120,15 @@ Everything on the page is also a service under `workout_tracker.*`, for
 example `workout_tracker.log_set`, `workout_tracker.log_body` and
 `workout_tracker.export`. Add `profile: <user id>` to act for another person.
 See **Developer tools > Actions** for the full list.
+
+Events for your own automations: `workout_pr` (new record),
+`workout_rest_over`, `workout_gym_arrived` and `workout_gym_left`.
+
+## Credits
+
+Exercise pictures and instructions come from
+[free-exercise-db](https://github.com/yuhonas/free-exercise-db), released into
+the public domain. `tools/build_library.py` rebuilds them.
 
 ## License
 

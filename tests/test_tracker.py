@@ -22,7 +22,7 @@ class FakeHost:
     def __init__(self, states=None, services=()):
         self.states = states or {}
         self.services = set(services)
-        self.calls, self.events = [], []
+        self.calls, self.events, self.timers = [], [], []
 
     async def run(self, func, *args):
         return func(*args)
@@ -41,6 +41,17 @@ class FakeHost:
 
     def fire(self, ev, data):
         self.events.append((ev, data))
+
+    def later(self, seconds, fn):
+        timer = {"seconds": seconds, "fn": fn, "cancelled": False}
+        self.timers.append(timer)
+        return lambda: timer.update(cancelled=True)
+
+    async def run_timers(self):
+        due, self.timers = self.timers, []
+        for t in due:
+            if not t["cancelled"]:
+                await t["fn"]()
 
 
 def run(coro):
@@ -161,6 +172,93 @@ class TrackerTest(unittest.TestCase):
         run(self.t.hide_exercise("Cable Fly"))
         names = [c["name"] for c in self.b("view")["attributes"]["cards"]]
         self.assertNotIn("Cable Fly", names)
+
+    def test_demos(self):
+        sel = self.b("selected")["attributes"]
+        self.assertEqual(sel["name"], "Incline Barbell Bench Press")
+        self.assertEqual(sel["demo"], "Barbell_Incline_Bench_Press_-_Medium_Grip")
+        run(self.t.add_exercise("Cable Fly", "chest", 5, "Cable_Crossover"))
+        self.assertEqual(self.b("selected")["attributes"]["demo"], "Cable_Crossover")
+        run(self.t.set_demo("Cable Fly", "Flat_Bench_Cable_Flyes"))
+        self.assertEqual(self.b("selected")["attributes"]["demo"], "Flat_Bench_Cable_Flyes")
+        run(self.t.set_demo("Cable Fly", ""))
+        self.assertEqual(self.b("selected")["attributes"]["demo"], "")
+        # changing a built-in exercise's demo, and a bad id
+        run(self.t.set_demo("Pec Deck", "Machine_Fly"))
+        cards = {c["name"]: c for c in self.b("view")["attributes"]["cards"]}
+        self.assertEqual(cards["Pec Deck"]["demo"], "Machine_Fly")
+        with self.assertRaises(ValueError):
+            run(self.t.set_demo("Pec Deck", "../etc/passwd"))
+        # re-adding without a demo keeps the one it had
+        run(self.t.add_exercise("Cable Fly", "chest", 5))
+        run(self.t.set_demo("Cable Fly", "Cable_Crossover"))
+        run(self.t.add_exercise("Cable Fly", "chest", 5))
+        self.assertEqual(self.b("selected")["attributes"]["demo"], "Cable_Crossover")
+
+    def test_old_config_gets_builtin_demos(self):
+        old = os.path.join(self.tmp, "old.yaml")
+        with open(old, "w") as fh:
+            fh.write("groups: {main: [legs], addon: [abs]}\nexercises:\n"
+                     "  Leg Press: {group: legs, step: 5}\n  My Squat: {group: legs}\n")
+        t = Tracker(self.host, os.path.join(self.tmp, "o.db"), old, self.tmp, "/x", {})
+        run(t.start())
+        cards = {c["name"]: c for c in t.bundle["view"]["attributes"]["cards"]}
+        self.assertEqual(cards["Leg Press"]["demo"], "Leg_Press")
+        self.assertEqual(cards["My Squat"]["demo"], "")
+
+    def test_rest_timer(self):
+        rest = self.b("rest")
+        self.assertEqual(rest["state"], "idle")
+        self.assertEqual(rest["attributes"]["seconds"], 90)
+        self.host.calls.clear()
+        run(self.t.log_set(weight=40, reps=15))
+        rest = self.b("rest")["attributes"]
+        self.assertEqual(self.b("rest")["state"], "running")
+        self.assertEqual(rest["exercise"], "Incline Barbell Bench Press")
+        self.assertAlmostEqual((rest["ends"] - rest["started"]) / 1000, 90, delta=1)
+        self.assertEqual(self.host.timers[-1]["seconds"], 90)
+        # a new set restarts the timer; only the latest one fires
+        run(self.t.log_set(weight=40, reps=15))
+        run(self.host.run_timers())
+        self.assertEqual(self.b("rest")["state"], "idle")
+        self.assertEqual(len(self.host.calls), 1)
+        msg = self.host.calls[0][2]
+        self.assertEqual(msg["title"], "Rest over")
+        self.assertIn("set 3 of 3", msg["message"])
+        self.assertEqual(msg["data"]["tag"], "workout-rest")
+        self.assertEqual(self.host.events[-1][0], "workout_rest_over")
+        # adding time keeps the start, stopping cancels
+        run(self.t.rest_start(60))
+        started = self.b("rest")["attributes"]["started"]
+        run(self.t.rest_add(30))
+        r = self.b("rest")["attributes"]
+        self.assertEqual((r["started"], r["length"]), (started, 90))
+        self.assertAlmostEqual((r["ends"] - started) / 1000, 90, delta=1)
+        run(self.t.rest_add(-200))
+        self.assertEqual(self.b("rest")["state"], "idle")
+        run(self.t.rest_start())
+        run(self.t.rest_stop())
+        run(self.host.run_timers())
+        self.assertEqual(len(self.host.calls), 1)
+        # settings: shorter rest, no phone message, 0 = off
+        run(self.t.rest_settings(seconds=120, notify=False))
+        self.assertEqual(self.b("rest")["attributes"]["seconds"], 120)
+        self.assertFalse(self.b("rest")["attributes"]["notify"])
+        run(self.t.log_set(weight=40, reps=15))
+        run(self.host.run_timers())
+        self.assertEqual(len(self.host.calls), 1)
+        run(self.t.rest_settings(seconds=0))
+        run(self.t.log_set(weight=40, reps=15))
+        self.assertEqual(self.b("rest")["state"], "idle")
+        # settings survive a restart
+        t2 = Tracker(self.host, self.t.db, CFG, self.tmp, "/x", {})
+        run(t2.start())
+        self.assertEqual(t2.bundle["rest"]["attributes"]["seconds"], 0)
+
+    def test_no_rest_when_logging_a_past_day(self):
+        run(self.t.set_day("yesterday"))
+        run(self.t.log_set(weight=40, reps=15))
+        self.assertEqual(self.b("rest")["state"], "idle")
 
     def test_midnight(self):
         run(self.t.select_main("legs"))

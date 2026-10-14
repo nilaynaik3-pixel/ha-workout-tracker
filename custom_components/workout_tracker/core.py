@@ -17,7 +17,9 @@ Model
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import sqlite3
 from datetime import date, datetime
 
@@ -53,6 +55,10 @@ CREATE TABLE IF NOT EXISTS body (
     value REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_body_metric_day ON body(metric, day);
+CREATE TABLE IF NOT EXISTS prefs (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS gym_visits (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     start TEXT NOT NULL,
@@ -90,12 +96,31 @@ def _ex_entry(ex, d_sets, d_reps, d_step):
         "sets": int(ex.get("sets", d_sets)),
         "reps": int(ex.get("reps", d_reps)),
         "start_weight": float(ex.get("start_weight", 0) or 0),
+        "demo": _demo_id(ex.get("demo")),
         "hidden": False,
         "custom": False,
     }
 
 
-def load_config(path: str, db_path: str | None = None) -> dict:
+def _demo_id(v):
+    """A library exercise id (letters, digits, _ and -), or ""."""
+    v = str(v or "").strip()
+    return v if re.fullmatch(r"[A-Za-z0-9_\-]{1,120}", v) else ""
+
+
+def config_demos(path):
+    """{exercise name: demo id} from an exercises.yaml (used to fill in demos
+    for configs written before demos existed)."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            raw = yaml.safe_load(fh) or {}
+    except OSError:
+        return {}
+    return {str(n): _demo_id((e or {}).get("demo")) for n, e in (raw.get("exercises") or {}).items()
+            if _demo_id((e or {}).get("demo"))}
+
+
+def load_config(path: str, db_path: str | None = None, demo_defaults: dict | None = None) -> dict:
     """Read exercises.yaml, then apply dashboard additions/hides from the DB.
 
     Returns {"main": [...], "addon": [...], "groups": [...],
@@ -118,10 +143,13 @@ def load_config(path: str, db_path: str | None = None) -> dict:
     exercises = {}
     for name, ex in (raw.get("exercises") or {}).items():
         exercises[str(name)] = _ex_entry(ex or {}, d_sets, d_reps, d_step)
+    for name, demo in (demo_defaults or {}).items():
+        if name in exercises and not exercises[name]["demo"]:
+            exercises[name]["demo"] = demo
 
     if db_path:
         con = _connect(db_path)
-        for r in con.execute("SELECT name, grp, step, hidden FROM exercise_overrides"):
+        for r in con.execute("SELECT name, grp, step, hidden, demo FROM exercise_overrides"):
             name = r["name"]
             if name in exercises:
                 exercises[name]["hidden"] = bool(r["hidden"])
@@ -130,6 +158,10 @@ def load_config(path: str, db_path: str | None = None) -> dict:
                 e["hidden"] = bool(r["hidden"])
                 e["custom"] = True
                 exercises[name] = e
+            else:
+                continue
+            if r["demo"] is not None:   # "" = demo removed on purpose
+                exercises[name]["demo"] = _demo_id(r["demo"])
         con.close()
 
     groups = list(main) + [x for x in addon if x not in main]
@@ -171,6 +203,10 @@ def _connect(db_path: str) -> sqlite3.Connection:
     cols = [r["name"] for r in con.execute("PRAGMA table_info(sets)")]
     if "kind" not in cols:   # added in v2: 'work' or 'warmup'
         con.execute("ALTER TABLE sets ADD COLUMN kind TEXT NOT NULL DEFAULT 'work'")
+        con.commit()
+    cols = [r["name"] for r in con.execute("PRAGMA table_info(exercise_overrides)")]
+    if "demo" not in cols:   # added in 1.2: library picture for the exercise
+        con.execute("ALTER TABLE exercise_overrides ADD COLUMN demo TEXT")
         con.commit()
     return con
 
@@ -230,20 +266,54 @@ def undo_last_set(db_path, exercise=None):
     return dict(row) if row else None
 
 
-def add_exercise(db_path, name, group, step):
-    """Add (or un-hide) an exercise from the dashboard."""
+def add_exercise(db_path, name, group, step, demo=None):
+    """Add (or un-hide) an exercise from the dashboard, optionally with a
+    library demo."""
     name = " ".join(str(name).split())
     if not name:
         raise ValueError("empty exercise name")
+    demo = _demo_id(demo) or None
     con = _connect(db_path)
     with con:
         con.execute(
-            "INSERT INTO exercise_overrides(name, grp, step, hidden) VALUES(?, ?, ?, 0) "
-            "ON CONFLICT(name) DO UPDATE SET grp = excluded.grp, step = excluded.step, hidden = 0",
-            (name, str(group).strip().lower(), float(step)),
+            "INSERT INTO exercise_overrides(name, grp, step, hidden, demo) VALUES(?, ?, ?, 0, ?) "
+            "ON CONFLICT(name) DO UPDATE SET grp = excluded.grp, step = excluded.step, hidden = 0, "
+            "demo = COALESCE(excluded.demo, exercise_overrides.demo)",
+            (name, str(group).strip().lower(), float(step), demo),
         )
     con.close()
     return name
+
+
+def set_demo(db_path, name, demo):
+    """Link an exercise to a library demo; an empty demo removes it."""
+    raw = str(demo or "").strip()
+    demo = _demo_id(raw)
+    if raw and not demo:
+        raise ValueError("invalid demo id")
+    con = _connect(db_path)
+    with con:
+        con.execute(
+            "INSERT INTO exercise_overrides(name, demo) VALUES(?, ?) "
+            "ON CONFLICT(name) DO UPDATE SET demo = excluded.demo",
+            (name, demo),
+        )
+    con.close()
+
+
+def get_prefs(db_path):
+    con = _connect(db_path)
+    out = {r["key"]: json.loads(r["value"]) for r in con.execute("SELECT key, value FROM prefs")}
+    con.close()
+    return out
+
+
+def set_pref(db_path, key, value):
+    con = _connect(db_path)
+    with con:
+        con.execute("INSERT INTO prefs(key, value) VALUES(?, ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, json.dumps(value)))
+    con.close()
 
 
 def hide_exercise(db_path, name, hidden=True):
@@ -445,6 +515,7 @@ def exercise_card(db_path, name, ex_cfg, history=3, today=None, series=8):
     return {
         "name": name,
         "group": ex_cfg["group"],
+        "demo": ex_cfg.get("demo") or "",
         "target": f"{ex_cfg['sets']}×{ex_cfg['reps']}",
         "target_sets": ex_cfg["sets"],
         "step": ex_cfg["step"],

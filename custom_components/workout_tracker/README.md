@@ -1,7 +1,8 @@
 # Workout Tracker for Home Assistant
 
 Adds a **Workout** page to the sidebar: log sets with progression advice,
-warm-ups, notes and live personal-record alerts; a weekly overview with
+warm-ups, notes, a rest timer and live personal-record alerts; exercise demos
+and a searchable library of 870+ exercises; a weekly overview with
 charts, a calendar to check or fix any day, body measurements with BMI,
 time-in-gym tracking and CSV export.
 

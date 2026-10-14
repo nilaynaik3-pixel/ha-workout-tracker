@@ -12,18 +12,23 @@ Bundle keys (each {"state", "attributes", "last_updated"}):
   day       the day opened in the Overview calendar
   stats     everything the Overview tab draws
   export    the latest CSV export
+  rest      the rest timer between sets
 """
 
 from __future__ import annotations
 
 import logging
+import os
+import time
 from datetime import date, timedelta
 
 from . import core as wc
 
 _LOGGER = logging.getLogger(__name__)
 HISTORY = 3
-PARTS = ("plan", "view", "selected", "day", "stats", "export")
+PARTS = ("plan", "view", "selected", "day", "stats", "export", "rest")
+DEFAULT_REST = 90          # seconds between sets
+BUILTIN_CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "exercises.yaml")
 
 
 def _truthy(v):
@@ -51,6 +56,9 @@ class Tracker:
         self.open_day = None
         self.last_pr = None
         self.export_info = None
+        self.prefs = {}
+        self.rest = None            # {"exercise", "seconds", "started", "ends"} while running
+        self._rest_cancel = None
         self.bundle = {k: {"state": "none", "attributes": {}, "last_updated": "0"} for k in PARTS}
         self._version = 0
         # shared with the websocket layer so open cards survive a reload
@@ -78,7 +86,9 @@ class Tracker:
 
     # -------------------------------------------------------------- config
     async def load(self):
-        self.cfg = await self.run(wc.load_config, self.config_path, self.db)
+        demos = await self.run(wc.config_demos, BUILTIN_CONFIG)
+        self.cfg = await self.run(wc.load_config, self.config_path, self.db, demos)
+        self.prefs = await self.run(wc.get_prefs, self.db)
         s = self.cfg["settings"]
         for key in ("person", "gym_zone", "notify", "dashboard_url"):
             if key in self.options:
@@ -184,6 +194,13 @@ class Tracker:
                 self._set("day", self.open_day, d)
             else:
                 self._set("day", "none", {})
+        if "rest" in parts:
+            self._set("rest", "running" if self.rest else "idle", {
+                "seconds": self.rest_seconds,
+                "notify": self.rest_notify,
+                "phone": bool(self.notify),
+                **(self.rest or {}),
+            })
         if "export" in parts:
             if self.export_info:
                 self._set("export", self.export_info["created"], {"files": self.export_info["files"]})
@@ -239,6 +256,8 @@ class Tracker:
                        float(rpe or 0), self.log_day, None, kind)
         if kind == "work":
             await self._check_pr(exercise)
+        if self.log_day is None and self.rest_seconds > 0:
+            self._start_rest(exercise, self.rest_seconds)
         await self.publish()
 
     async def rpe_all(self, exercise=None, rpe=0, only_missing=False):
@@ -250,6 +269,7 @@ class Tracker:
 
     async def undo(self, exercise=None):
         await self.run(wc.undo_last_set, self.db, exercise)
+        self._stop_rest()
         await self.publish()
 
     async def set_note(self, exercise=None, note=""):
@@ -278,12 +298,19 @@ class Tracker:
         self.host.fire("workout_pr", pr)
 
     # ------------------------------------------------------- exercises
-    async def add_exercise(self, name, group, step=2.5):
-        name = await self.run(wc.add_exercise, self.db, name, group, float(step))
+    async def add_exercise(self, name, group, step=2.5, demo=None):
+        name = await self.run(wc.add_exercise, self.db, name, group, float(step), demo)
         await self.load()
         if self.cfg["exercises"].get(name, {}).get("group") in self._groups():
             self.exercise = name
         await self.publish()
+
+    async def set_demo(self, exercise=None, demo=""):
+        exercise = exercise or self.exercise
+        if exercise in self.cfg["exercises"]:
+            await self.run(wc.set_demo, self.db, exercise, demo or "")
+            await self.load()
+            await self.publish(("view", "selected"))
 
     async def hide_exercise(self, exercise=None):
         exercise = exercise or self.exercise
@@ -291,6 +318,95 @@ class Tracker:
             await self.run(wc.hide_exercise, self.db, exercise, True)
             await self.load()
             await self.publish()
+
+    # ------------------------------------------------------- rest timer
+    @property
+    def rest_seconds(self):
+        try:
+            return max(0, int(self.prefs.get("rest_seconds", DEFAULT_REST)))
+        except (TypeError, ValueError):
+            return DEFAULT_REST
+
+    @property
+    def rest_notify(self):
+        return bool(self.prefs.get("rest_notify", True))
+
+    def _start_rest(self, exercise, seconds, started=None, length=None):
+        """Run the rest timer for `seconds` from now. `started`/`length` keep
+        the original start when time is added to a running timer."""
+        self._stop_rest()
+        now = time.time()
+        started = started or int(now * 1000)
+        self.rest = {"exercise": exercise, "length": int(length or seconds),
+                     "started": started, "ends": int((now + seconds) * 1000)}
+
+        async def done():
+            if self.rest and self.rest["started"] == started:
+                await self._rest_done()
+
+        self._rest_cancel = self.host.later(seconds, done)
+
+    def _stop_rest(self):
+        if self._rest_cancel:
+            try:
+                self._rest_cancel()
+            except Exception:  # already fired
+                pass
+        self._rest_cancel = None
+        self.rest = None
+
+    async def _rest_done(self):
+        exercise = self.rest["exercise"] if self.rest else None
+        self._rest_cancel = None
+        self.rest = None
+        self.host.fire("workout_rest_over", {"exercise": exercise})
+        if self.rest_notify:
+            await self.notify_("Rest over", self._next_set_text(exercise),
+                               {"tag": "workout-rest", "push": {"interruption-level": "time-sensitive"}})
+        await self.publish(("rest",))
+
+    def _next_set_text(self, exercise):
+        sel = self.bundle["selected"]["attributes"] or {}
+        if not exercise or sel.get("name") != exercise:
+            return "Time for your next set."
+        done, target = sel.get("today_done", 0), sel.get("target_sets", 3)
+        if done >= target:
+            return f"{exercise}: {done} sets done. On to the next exercise."
+        w = sel.get("default_weight") or 0
+        load = f"{wc._fmt_w(w)} kg × {sel.get('default_reps')}" if w else f"{sel.get('default_reps')} reps"
+        return f"{exercise}, set {done + 1} of {target}: {load}"
+
+    async def rest_start(self, seconds=None, exercise=None):
+        secs = int(float(seconds)) if seconds not in (None, "") else (self.rest_seconds or DEFAULT_REST)
+        if secs > 0:
+            self._start_rest(exercise or self.exercise, min(secs, 3600))
+        await self.publish(("rest",))
+
+    async def rest_stop(self):
+        self._stop_rest()
+        await self.publish(("rest",))
+
+    async def rest_add(self, seconds=15):
+        """Add (or with a negative number, take off) time on the running timer."""
+        if self.rest:
+            extra = int(float(seconds))
+            left = self.rest["ends"] / 1000 - time.time() + extra
+            if left <= 0:
+                self._stop_rest()
+            else:
+                r = self.rest
+                self._start_rest(r["exercise"], left, r["started"], max(1, r["length"] + extra))
+        await self.publish(("rest",))
+
+    async def rest_settings(self, seconds=None, notify=None):
+        if seconds not in (None, ""):
+            secs = max(0, min(int(float(seconds)), 3600))
+            await self.run(wc.set_pref, self.db, "rest_seconds", secs)
+            self.prefs["rest_seconds"] = secs
+        if notify is not None:
+            await self.run(wc.set_pref, self.db, "rest_notify", _truthy(notify))
+            self.prefs["rest_notify"] = _truthy(notify)
+        await self.publish(("rest",))
 
     # ------------------------------------------------------- calendar editing
     async def open_day_(self, day=None):
@@ -329,14 +445,15 @@ class Tracker:
         await self.publish(("stats",))
 
     # ------------------------------------------------------- gym visits
-    async def notify_(self, title, message):
+    async def notify_(self, title, message, extra=None):
         if not self.notify:
             return
         domain, _, name = self.notify.partition(".")
         url = self.cfg["settings"].get("dashboard_url") or "/workout"
         try:
             await self.host.call_service(domain, name, {
-                "title": title, "message": message, "data": {"url": url, "clickAction": url}})
+                "title": title, "message": message,
+                "data": {"url": url, "clickAction": url, **(extra or {})}})
         except Exception as err:
             _LOGGER.warning("workout_tracker: notification failed: %s", err)
 

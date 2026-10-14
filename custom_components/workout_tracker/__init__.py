@@ -9,27 +9,31 @@ from __future__ import annotations
 
 import logging
 import os
+import re
+import zipfile
 
 import voluptuous as vol
+from aiohttp import web
 
 from homeassistant.components import frontend, panel_custom, websocket_api
-from homeassistant.components.http import StaticPathConfig
+from homeassistant.components.http import HomeAssistantView, StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, EVENT_STATE_CHANGED
 from homeassistant.core import CoreState, Event, HomeAssistant, ServiceCall, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
-from homeassistant.helpers.event import async_track_time_change
+from homeassistant.helpers.event import async_call_later, async_track_time_change
 
 from .tracker import Hub
 
 _LOGGER = logging.getLogger(__name__)
 
 DOMAIN = "workout_tracker"
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 PANEL_URL = "workout"
 STATIC_URL = "/workout_tracker/static"
 EXPORT_URL = "/workout_tracker/export"
+DEMO_ZIP = os.path.join(os.path.dirname(__file__), "demos.zip")
 CARD_URL = f"{STATIC_URL}/workout-card.js?v={VERSION}"
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
@@ -43,7 +47,12 @@ SERVICES = {
     "select_main": ("select_main", ["group"]),
     "toggle_addon": ("toggle_addon", ["group", "on"]),
     "suggest": ("suggest", []),
-    "add_exercise": ("add_exercise", ["name", "group", "step"]),
+    "add_exercise": ("add_exercise", ["name", "group", "step", "demo"]),
+    "set_demo": ("set_demo", ["exercise", "demo"]),
+    "rest_start": ("rest_start", ["seconds", "exercise"]),
+    "rest_stop": ("rest_stop", []),
+    "rest_add": ("rest_add", ["seconds"]),
+    "rest_settings": ("rest_settings", ["seconds", "notify"]),
     "hide_exercise": ("hide_exercise", ["exercise"]),
     "set_day": ("set_day", ["day"]),
     "open_day": ("open_day_", ["day"]),
@@ -83,6 +92,45 @@ class HassHost:
 
     def fire(self, event_type, data):
         self.hass.bus.async_fire(event_type, data)
+
+    def later(self, seconds, coro_fn):
+        """Run coro_fn() after `seconds`; returns a cancel function."""
+        async def fire(_now):
+            await coro_fn()
+        return async_call_later(self.hass, seconds, fire)
+
+
+class DemoView(HomeAssistantView):
+    """Exercise pictures, served straight from demos.zip.
+
+    Public like the rest of the static files: <img> tags can't send a token,
+    and the pictures are the same for every install.
+    """
+
+    url = "/workout_tracker/demo/{ex_id}/{frame}"
+    name = "workout_tracker:demo"
+    requires_auth = False
+
+    def __init__(self, hass: HomeAssistant) -> None:
+        self.hass = hass
+        self._zip = None
+
+    def _read(self, member):
+        if self._zip is None:
+            self._zip = zipfile.ZipFile(DEMO_ZIP)
+        try:
+            return self._zip.read(member)
+        except KeyError:
+            return None
+
+    async def get(self, request, ex_id, frame):
+        if not re.fullmatch(r"[A-Za-z0-9_\-]{1,120}", ex_id) or frame not in ("0.webp", "1.webp"):
+            return web.Response(status=404)
+        data = await self.hass.async_add_executor_job(self._read, f"{ex_id}/{frame}")
+        if data is None:
+            return web.Response(status=404)
+        return web.Response(body=data, content_type="image/webp",
+                            headers={"Cache-Control": "public, max-age=31536000, immutable"})
 
 
 def _paths(hass: HomeAssistant):
@@ -173,6 +221,7 @@ async def _register_frontend(hass: HomeAssistant) -> None:
         ])
         # Load the cards everywhere, so they can also be used on any dashboard.
         frontend.add_extra_js_url(hass, CARD_URL)
+        hass.http.register_view(DemoView(hass))
         store["static"] = True
     if PANEL_URL not in hass.data.get(frontend.DATA_PANELS, {}):
         await panel_custom.async_register_panel(

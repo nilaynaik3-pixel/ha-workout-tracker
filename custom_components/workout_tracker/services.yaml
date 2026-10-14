@@ -116,6 +116,61 @@ add_exercise:
           max: 100000
           step: 0.5
           mode: box
+    demo:
+      name: Library demo id
+      description: Exercise id from the built-in library, for the picture and instructions.
+      selector:
+        text: {}
+set_demo:
+  name: Set an exercise's demo
+  fields:
+    exercise:
+      name: Exercise
+      selector:
+        text: {}
+    demo:
+      name: Library demo id
+      description: Leave empty to remove the demo.
+      selector:
+        text: {}
+rest_start:
+  name: Start the rest timer
+  fields:
+    seconds:
+      name: Seconds
+      description: Defaults to your rest length.
+      selector:
+        number:
+          min: 5
+          max: 3600
+          mode: box
+rest_stop:
+  name: Stop the rest timer
+rest_add:
+  name: Add time to the rest timer
+  fields:
+    seconds:
+      name: Seconds
+      description: Negative to take time off.
+      selector:
+        number:
+          min: -600
+          max: 600
+          mode: box
+rest_settings:
+  name: Rest timer settings
+  fields:
+    seconds:
+      name: Rest length (seconds, 0 = off)
+      selector:
+        number:
+          min: 0
+          max: 3600
+          mode: box
+    notify:
+      name: Phone notification when rest is over
+      selector:
+        boolean: {}
 hide_exercise:
   name: Hide an exercise (history is kept)
   fields:

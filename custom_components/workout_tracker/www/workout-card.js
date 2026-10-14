@@ -21,11 +21,69 @@ const ACTIONS = {
   start: { cls: "new", verb: (w) => (w ? `Start around ${w} kg` : "Find your weight") },
 };
 const RPES = [6, 7, 7.5, 8, 8.5, 9, 9.5, 10];
+const WT_VERSION = "1.2.0";
+const REST_CHOICES = [0, 60, 90, 120, 180];
 
 const esc = (s) =>
   String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const num = (x) => (x === null || x === undefined || x === "" ? "" : String(Math.round(Number(x) * 100) / 100));
 const title = (s) => String(s || "").replace(/^./, (c) => c.toUpperCase());
+
+const mmss = (secs) => {
+  const s = Math.max(0, Math.ceil(secs));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+};
+
+// ---------------------------------------------------------------- exercise library
+// free-exercise-db (public domain), shipped with the integration.
+const demoSrc = (id, frame) => `/workout_tracker/demo/${encodeURIComponent(id)}/${frame}.webp`;
+const SYNONYMS = {
+  machine: /machine|leverage|lever|smith/, db: /dumbbell/, bb: /barbell/, ez: /e-z|ez/,
+  pulldown: /pulldown|pull-down/, pushdown: /pushdown|push-down/, curl: /curl/, raise: /raise/,
+};
+const LIB = {
+  list: null,
+  byId: null,
+  promise: null,
+  load() {
+    if (!this.promise) {
+      this.promise = fetch(`/workout_tracker/static/library.json?v=${WT_VERSION}`)
+        .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+        .then((list) => { this.list = list; this.byId = new Map(list.map((x) => [x.id, x])); return list; })
+        .catch((err) => { this.promise = null; throw err; });
+    }
+    return this.promise;
+  },
+  /** Best matches for a search: all words first, then most words; strength work before stretches. */
+  search(q, group, limit = 40) {
+    if (!this.list) return [];
+    const words = String(q || "").toLowerCase().split(/[^a-z0-9-]+/).filter(Boolean);
+    const out = [];
+    for (const x of this.list) {
+      if (group && x.g !== group) continue;
+      const name = x.n.toLowerCase();
+      const hay = `${name} ${x.e}`;
+      let hit = 0;
+      for (const w of words) if (hay.includes(w) || (SYNONYMS[w] && SYNONYMS[w].test(hay))) hit++;
+      if (words.length && !hit) continue;
+      if (words.length > 2 && hit < words.length - 1) continue;
+      const kind = x.c === "strength" || x.c === "powerlifting" ? 0 : x.c === "stretching" ? 2 : 1;
+      const starts = words.length && name.startsWith(words[0]) ? 0 : 1;
+      out.push([words.length - hit, kind, starts, name, x]);
+    }
+    out.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2] || (a[3] < b[3] ? -1 : 1));
+    return out.slice(0, limit).map((r) => r[4]);
+  },
+};
+
+/** Two pictures shown in turn: start and end of the movement. */
+function demoAnim(id, cls = "") {
+  const phase = Date.now() % 2000;   // keep the rhythm steady across re-renders
+  return `<div class="anim ${cls}" style="--ph:-${phase}ms">
+    <img src="${demoSrc(id, 0)}" alt="" loading="lazy" decoding="async">
+    <img src="${demoSrc(id, 1)}" alt="" loading="lazy" decoding="async" onerror="this.remove()">
+  </div>`;
+}
 
 // ---------------------------------------------------------------- data layer
 const WT = {
@@ -163,6 +221,10 @@ class WorkoutCard extends HTMLElement {
     this._newGroup = "";
     this._newStep = "2.5";
     this._manageOpen = false;
+    this._newDemo = null;     // library exercise picked in the add form
+    this._demoOpen = false;   // big demo + instructions shown
+    this._picker = null;      // {mode: "add" | "demo", q, group} while searching the library
+    this._restMenu = false;
     loadFont();
     this.shadowRoot.addEventListener("click", (e) => this._onClick(e));
     this.shadowRoot.addEventListener("input", (e) => this._onInput(e));
@@ -191,6 +253,7 @@ class WorkoutCard extends HTMLElement {
 
   disconnectedCallback() {
     WT.listeners.delete(this._onStore);
+    this._stopTick();
   }
 
   set hass(hass) {
@@ -203,7 +266,7 @@ class WorkoutCard extends HTMLElement {
   _update() {
     const hass = this._hass;
     if (!hass) return;
-    let key = ["plan", "view", "selected"].map((p) => wtGet(hass, p)?.last_updated || "-").join("|");
+    let key = ["plan", "view", "selected", "rest"].map((p) => wtGet(hass, p)?.last_updated || "-").join("|");
     if (!WT.integration(hass)) {
       key += ["input_select.workout_main", "input_boolean.workout_add_biceps",
         "input_boolean.workout_add_triceps", "input_boolean.workout_add_abs"]
@@ -384,14 +447,91 @@ class WorkoutCard extends HTMLElement {
           this._render();
           return;
         }
-        await this._call("workout_add_exercise", {
-          name, group: this._newGroup, step: Number(this._newStep),
-        });
+        const data = { name, group: this._newGroup, step: Number(this._newStep) };
+        if (this._newDemo) data.demo = this._newDemo;
+        await this._call("workout_add_exercise", data);
         this._flashAdd = `Added ${name}.`;
         this._newName = "";
+        this._newDemo = null;
         this._render();
         break;
       }
+      case "demo-toggle":
+        this._demoOpen = !this._demoOpen;
+        this._picker = null;
+        if (this._demoOpen) LIB.load().then(() => this._render()).catch(() => {});
+        this._render();
+        break;
+      case "demo-change":
+        this._openPicker("demo", sel?.attributes.group || "");
+        break;
+      case "demo-remove":
+        if (sel && confirm(`Remove the demo from ${sel.state}?`)) {
+          this._demoOpen = false;
+          this._call("workout_set_demo", { exercise: sel.state, demo: "" });
+        }
+        break;
+      case "lib-open":
+        this._readInputs();
+        this._openPicker("add", "");
+        break;
+      case "lib-g":
+        this._picker.group = btn.dataset.g;
+        this._render();
+        break;
+      case "lib-close":
+        this._picker = null;
+        this._render();
+        break;
+      case "lib-pick": {
+        const x = LIB.byId?.get(btn.dataset.id);
+        if (!x) return;
+        if (this._picker?.mode === "demo") {
+          this._picker = null;
+          this._demoOpen = true;
+          this._render();
+          this._call("workout_set_demo", { exercise: sel.state, demo: x.id });
+        } else {
+          const groups = this._groupList();
+          this._newName = x.n;
+          this._newGroup = groups.includes(x.g) ? x.g : this._newGroup;
+          this._newStep = String(x.st);
+          this._newDemo = x.id;
+          this._picker = null;
+          this._flashAdd = "";
+          this._render();
+        }
+        break;
+      }
+      case "new-demo-clear":
+        this._newDemo = null;
+        this._render();
+        break;
+      case "rest-menu":
+        this._restMenu = !this._restMenu;
+        this._render();
+        break;
+      case "rest-set":
+        this._restMenu = false;
+        this._call("workout_rest_settings", { seconds: Number(btn.dataset.s) });
+        break;
+      case "rest-notify":
+        this._call("workout_rest_settings", { notify: btn.getAttribute("aria-pressed") !== "true" });
+        break;
+      case "rest-start":
+        this._restMenu = false;
+        this._call("workout_rest_start", { exercise: sel?.state });
+        break;
+      case "rest-add":
+        this._call("workout_rest_add", { seconds: Number(btn.dataset.s) });
+        break;
+      case "rest-stop":
+        this._call("workout_rest_stop");
+        break;
+      case "rest-dismiss":
+        this._restOver = null;
+        this._render();
+        break;
       case "hide":
         if (sel && confirm(`Hide ${sel.state}? Its history is kept, and adding it again with the same name brings it back.`)) {
           this._call("workout_hide_exercise", { exercise: sel.state });
@@ -406,10 +546,33 @@ class WorkoutCard extends HTMLElement {
       this._call("workout_set_day", { day: t.value === localISO(0) ? "today" : t.value });
       return;
     }
+    if (t.id === "lib-q") {
+      this._picker.q = t.value;
+      const list = this.shadowRoot.querySelector(".lib-list");
+      if (list) list.innerHTML = this._libItems();
+      return;
+    }
     if (t.id === "new-name") this._newName = t.value;
     if (t.id === "new-group") this._newGroup = t.value;
     if (t.id === "new-step") this._newStep = t.value;
     if (t.id === "w" || t.id === "r") this._readInputs();
+  }
+
+  _openPicker(mode, group) {
+    this._picker = { mode, q: "", group };
+    this._render();
+    LIB.load().then(() => {
+      this._render();
+      this.shadowRoot.getElementById("lib-q")?.focus();
+    }).catch((err) => {
+      this._picker = { ...this._picker, error: String(err.message || err) };
+      this._render();
+    });
+  }
+
+  _groupList() {
+    const p = this._st("pyscript.workout_plan")?.attributes || {};
+    return [...(p.main || []), ...(p.addon || [])].map((r) => r.group);
   }
 
   _readInputs() {
@@ -446,11 +609,165 @@ class WorkoutCard extends HTMLElement {
         ${this._renderManage(plan, sel)}
       </div></ha-card>`;
 
-    if (active === "new-name") {
-      const el = this.shadowRoot.getElementById("new-name");
+    if (active === "new-name" || active === "lib-q") {
+      const el = this.shadowRoot.getElementById(active);
       el?.focus();
       el?.setSelectionRange(el.value.length, el.value.length);
     }
+    this._syncTick();
+  }
+
+  // ------------------------------------------------------------ rest timer
+  _rest() {
+    const r = wtGet(this._hass, "rest");
+    return r && r.attributes && "seconds" in r.attributes ? r : null;
+  }
+
+  _syncTick() {
+    const r = this._rest();
+    if (r && r.state === "running") {
+      if (!this._tick) this._tick = setInterval(() => this._paintRest(), 250);
+      this._paintRest();
+    } else {
+      this._stopTick();
+    }
+  }
+
+  _stopTick() {
+    if (this._tick) clearInterval(this._tick);
+    this._tick = null;
+  }
+
+  /** Update the countdown in place, without re-rendering the card. */
+  _paintRest() {
+    const r = this._rest();
+    const box = this.shadowRoot.querySelector(".rest.on");
+    if (!r || r.state !== "running" || !box) return;
+    const a = r.attributes;
+    const left = (a.ends - Date.now()) / 1000;
+    const total = Math.max(1, (a.ends - a.started) / 1000);
+    box.querySelector(".rest-time").textContent = left > 0 ? mmss(left) : "Go";
+    box.querySelector(".rest-bar i").style.transform = `scaleX(${Math.max(0, Math.min(1, left / total))})`;
+    if (left <= 0 && !box.classList.contains("over")) {
+      box.classList.add("over");
+      box.querySelector(".rest-lbl").textContent = "Rest over";
+      this._buzz(a.started);
+    }
+  }
+
+  _buzz(token) {
+    if (this._buzzed === token) return;
+    this._buzzed = token;
+    this._haptic("success");
+    try { navigator.vibrate?.([120, 80, 120]); } catch (e) { /* not supported */ }
+  }
+
+  _renderRest(sel) {
+    const r = this._rest();
+    if (!r || (sel.attributes.log_day)) return "";
+    const a = r.attributes;
+    // The timer ran out (rather than being skipped): say so for a little while.
+    const prev = this._lastRest;
+    this._lastRest = r.state === "running" ? { ends: a.ends, started: a.started } : null;
+    if (r.state === "running") this._restOver = null;
+    else if (prev && Date.now() >= prev.ends - 1500) {
+      this._restOver = { until: Date.now() + 15000, started: prev.started };
+      this._buzz(prev.started);
+      setTimeout(() => this._render(), 15100);
+    }
+    if (r.state !== "running" && this._restOver && Date.now() < this._restOver.until) {
+      return `<div class="rest on over" role="status">
+        <div class="rest-row">
+          <span class="rest-time">Go</span>
+          <span class="rest-lbl">Rest over: time for the next set</span>
+          <button class="chip" data-action="rest-dismiss">OK</button>
+        </div>
+      </div>`;
+    }
+    if (r.state === "running") {
+      return `<div class="rest on" role="timer" aria-live="off">
+        <div class="rest-bar"><i></i></div>
+        <div class="rest-row">
+          <span class="rest-time">${mmss((a.ends - Date.now()) / 1000)}</span>
+          <span class="rest-lbl">Rest${a.exercise && a.exercise !== sel.state ? ` after ${esc(a.exercise)}` : ""}</span>
+          <button class="chip" data-action="rest-add" data-s="-15" aria-label="15 seconds less">\u221215</button>
+          <button class="chip" data-action="rest-add" data-s="15" aria-label="15 seconds more">+15</button>
+          <button class="chip" data-action="rest-stop">Skip</button>
+        </div>
+      </div>`;
+    }
+    const len = a.seconds ? mmss(a.seconds) : "off";
+    const menu = this._restMenu ? `<div class="rest-menu">
+        <div class="rest-opts" role="group" aria-label="Rest between sets">
+          ${REST_CHOICES.map((v) => `<button class="chip ${v === a.seconds ? "on" : ""}" data-action="rest-set" data-s="${v}" aria-pressed="${v === a.seconds}">${v ? mmss(v) : "Off"}</button>`).join("")}
+        </div>
+        ${a.phone ? `<button class="chip ${a.notify ? "on" : ""}" data-action="rest-notify" aria-pressed="${!!a.notify}">Phone alert when rest is over</button>` : ""}
+        <button class="link" data-action="rest-start">Start a rest now</button>
+      </div>` : "";
+    return `<div class="rest">
+      <button class="link quiet" data-action="rest-menu" aria-expanded="${this._restMenu}">Rest timer: ${len}${a.seconds ? " after each set" : ""}</button>
+      ${menu}
+    </div>`;
+  }
+
+  // ------------------------------------------------------------ demos and library
+  _renderDemoThumb(sel) {
+    if (!WT.integration(this._hass)) return "";
+    const id = sel.attributes.demo;
+    if (!id) {
+      return `<button class="demo-thumb none" data-action="demo-change" aria-label="Add a demo picture">+ demo</button>`;
+    }
+    return `<button class="demo-thumb ${this._demoOpen ? "open" : ""}" data-action="demo-toggle"
+      aria-expanded="${this._demoOpen}" aria-label="${this._demoOpen ? "Hide" : "Show"} how to do it">${demoAnim(id)}</button>`;
+  }
+
+  _renderDemoPanel(sel) {
+    if (this._picker?.mode === "demo") return this._renderPicker();
+    const id = sel.attributes.demo;
+    if (!this._demoOpen || !id) return "";
+    const x = LIB.byId?.get(id);
+    const muscles = x ? [x.m.map(title).join(", "), x.s.length ? `also ${x.s.join(", ")}` : ""].filter(Boolean).join(" \u00b7 ") : "";
+    return `<div class="demo-panel">
+      ${demoAnim(id, "big")}
+      ${x ? `<p class="demo-meta"><b>${esc(x.n)}</b><span>${esc(muscles)}${x.e ? ` \u00b7 ${esc(x.e)}` : ""}</span></p>
+        <ol class="howto">${x.i.map((t) => `<li>${esc(t)}</li>`).join("")}</ol>`
+        : `<p class="hint">Loading the instructions\u2026</p>`}
+      <div class="demo-tools">
+        <button class="link" data-action="demo-change">Pick a different demo</button>
+        <button class="link quiet" data-action="demo-remove">Remove</button>
+        <button class="link quiet" data-action="demo-toggle">Close</button>
+      </div>
+    </div>`;
+  }
+
+  _renderPicker() {
+    const pk = this._picker;
+    const groups = this._groupList();
+    const sel = this._st("pyscript.workout_selected");
+    const head = pk.mode === "demo"
+      ? `Demo for <b>${esc(sel?.state || "")}</b>`
+      : "Find an exercise in the library";
+    return `<div class="picker">
+      <p class="picker-head">${head}</p>
+      <input id="lib-q" type="search" value="${esc(pk.q)}" placeholder="Search ${LIB.list ? LIB.list.length : ""} exercises, e.g. cable fly" autocomplete="off" enterkeyhint="search">
+      <div class="lib-groups">
+        <button class="chip ${!pk.group ? "on" : ""}" data-action="lib-g" data-g="">All</button>
+        ${groups.map((g) => `<button class="chip ${pk.group === g ? "on" : ""}" data-action="lib-g" data-g="${esc(g)}">${esc(title(g))}</button>`).join("")}
+      </div>
+      <ul class="lib-list">${pk.error ? `<li class="hint">Couldn't load the library (${esc(pk.error)}).</li>` : this._libItems()}</ul>
+      <button class="link quiet" data-action="lib-close">Cancel</button>
+    </div>`;
+  }
+
+  _libItems() {
+    const pk = this._picker;
+    if (!LIB.list) return `<li class="hint">Loading\u2026</li>`;
+    const found = LIB.search(pk.q, pk.group);
+    if (!found.length) return `<li class="hint">Nothing found. Try fewer words${pk.group ? ", or All groups" : ""}.</li>`;
+    return found.map((x) => `<li><button data-action="lib-pick" data-id="${esc(x.id)}">
+        ${x.f ? `<img src="${demoSrc(x.id, 0)}" alt="" loading="lazy" decoding="async">` : `<span class="noimg"></span>`}
+        <span><b>${esc(x.n)}</b><small>${esc([title(x.m[0] || ""), x.e].filter(Boolean).join(" \u00b7 "))}</small></span>
+      </button></li>`).join("");
   }
 
   _renderDay(plan, view) {
@@ -561,7 +878,8 @@ class WorkoutCard extends HTMLElement {
     return `<section class="log">
       ${dayPicker}
       ${prBanner}
-      <h2>${esc(sel.state)}</h2>
+      <div class="exhead"><h2>${esc(sel.state)}</h2>${this._renderDemoThumb(sel)}</div>
+      ${this._renderDemoPanel(sel)}
       ${noteBlock}
       <p class="advice ${act.cls}">
         <strong>${esc(s.action === "start" && !s.weight ? act.verb(0) : act.verb(num(s.weight)))}</strong>
@@ -595,6 +913,7 @@ class WorkoutCard extends HTMLElement {
       <button class="log-btn ${this._flash && !this._flash.startsWith("Couldn") ? "ok" : ""}" data-action="log" ${this._busy ? "disabled" : ""}>
         ${this._flash ? esc(this._flash) : this._warm ? "Log warm-up" : `Log set ${nextWork}`}
       </button>
+      ${this._renderRest(sel)}
 
       <div class="sets">
         <ol class="plates">${plates.join("")}</ol>
@@ -643,9 +962,17 @@ class WorkoutCard extends HTMLElement {
     const p = plan.attributes;
     const groups = [...(p.main || []), ...(p.addon || [])].map((r) => r.group);
     if (!this._newGroup || !groups.includes(this._newGroup)) this._newGroup = groups[0] || "";
-    const steps = ["1", "2", "2.5", "5", "10"];
+    const steps = ["1", "2", "2.5", "4", "5", "10"];
+    if (!steps.includes(this._newStep)) steps.push(this._newStep);
+    const lib = WT.integration(this._hass);
+    const picked = this._newDemo
+      ? `<div class="picked">${demoAnim(this._newDemo, "mini")}<span>Demo from the library</span>
+           <button class="link quiet" data-action="new-demo-clear">Remove</button></div>` : "";
     return `<details class="manage" ${this._manageOpen ? "open" : ""}>
       <summary>Manage exercises</summary>
+      ${lib && this._picker?.mode === "add" ? this._renderPicker()
+        : lib ? `<button class="lib-btn" data-action="lib-open">Search the exercise library</button>` : ""}
+      ${picked}
       <div class="form">
         <label class="f-name">Name<input id="new-name" value="${esc(this._newName)}" placeholder="e.g. Cable fly" autocomplete="off"></label>
         <label>Muscle group<select id="new-group">${groups.map((g) => `<option value="${esc(g)}" ${g === this._newGroup ? "selected" : ""}>${esc(title(g))}</option>`).join("")}</select></label>
@@ -861,6 +1188,60 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
   border: 1px solid transparent; border-radius: 10px; padding: 10px 12px;
 }
 .add-btn { grid-column: 1 / -1; height: 44px; border-radius: 12px; border: 1px solid var(--wc-ink); background: none; font-weight: 600; }
+
+/* ---- demos ---- */
+.exhead { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.exhead h2 { flex: 1; min-width: 0; }
+.anim { position: relative; aspect-ratio: 3 / 2; overflow: hidden; border-radius: 10px; background: #fff; }
+.anim img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.anim img + img { animation: wcFlip 2s ease-in-out infinite; animation-delay: var(--ph, 0ms); }
+@keyframes wcFlip { 0%, 42% { opacity: 0; } 50%, 92% { opacity: 1; } 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .anim img + img { animation: none; opacity: 0; } }
+.demo-thumb { flex: none; width: 84px; padding: 0; border: 1px solid var(--wc-line); border-radius: 11px; background: none; margin-top: -2px; }
+.demo-thumb .anim { border-radius: 10px; }
+.demo-thumb.open { border-color: var(--wc-sel-line); box-shadow: inset 0 0 0 1px var(--wc-sel-line); }
+.demo-thumb.none { height: 56px; border-style: dashed; color: var(--wc-mute); font-size: 12px; }
+.demo-panel { margin: 4px 0 14px; }
+.demo-panel .anim.big { max-width: 420px; }
+.demo-meta { margin: 10px 0 4px; display: flex; flex-direction: column; }
+.demo-meta span { color: var(--wc-mute); font-size: 13px; }
+.howto { margin: 6px 0 4px; padding-left: 20px; font-size: 14px; }
+.howto li + li { margin-top: 4px; }
+.demo-tools { display: flex; gap: 16px; flex-wrap: wrap; }
+.picker { margin: 4px 0 14px; padding: 12px; border-radius: 14px; background: var(--wc-sunk); }
+.picker-head { margin: 0 0 8px; font-size: 14px; }
+.picker input { width: 100%; font: inherit; font-size: 16px; color: var(--wc-ink); background: var(--wc-bg);
+  border: 1px solid var(--wc-line); border-radius: 10px; padding: 10px 12px; }
+.lib-groups { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin: 8px 0; }
+.lib-groups::-webkit-scrollbar { display: none; }
+.lib-groups .chip { flex: none; }
+.chip.on { background: var(--wc-sel-bg); color: var(--wc-sel-fg); border-color: var(--wc-sel-line); }
+.lib-list { list-style: none; margin: 0 0 4px; padding: 0; max-height: 340px; overflow-y: auto; }
+.lib-list li + li { border-top: 1px solid var(--wc-line); }
+.lib-list button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 2px; border: 0; background: none; text-align: left; }
+.lib-list img, .lib-list .noimg { flex: none; width: 60px; height: 40px; object-fit: cover; border-radius: 6px; background: #fff; }
+.lib-list b { display: block; font-weight: 500; }
+.lib-list small { color: var(--wc-mute); font-size: 12px; }
+.lib-list .hint { margin: 8px 0; }
+.lib-btn { width: 100%; height: 44px; margin: 10px 0 2px; border-radius: 12px; border: 1px solid var(--wc-line); background: var(--wc-sunk); font-weight: 600; }
+.picked { display: flex; align-items: center; gap: 10px; margin: 10px 0 0; font-size: 13px; color: var(--wc-mute); }
+.picked .anim.mini { width: 60px; flex: none; border-radius: 6px; }
+.picked .link { margin-left: auto; }
+
+/* ---- rest timer ---- */
+.rest { margin: 8px 0 0; }
+.rest > .link { padding: 4px 0; font-size: 13px; }
+.rest-menu { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin: 4px 0 6px; }
+.rest-opts { display: flex; gap: 6px; flex-wrap: wrap; }
+.rest.on { margin-top: 10px; padding: 10px 12px 8px; border-radius: 14px; background: var(--wc-sunk); }
+.rest-bar { height: 4px; border-radius: 2px; background: var(--wc-line); overflow: hidden; }
+.rest-bar i { display: block; height: 100%; background: var(--wc-ink); transform-origin: left; transition: transform .25s linear; }
+.rest-row { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+.rest-time { font: 800 34px/1 var(--wc-num); font-variant-numeric: tabular-nums; min-width: 2.6em; }
+.rest-lbl { flex: 1; min-width: 0; color: var(--wc-mute); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rest.on.over { background: var(--wc-pr-bg); }
+.rest.on.over .rest-time { color: var(--wc-pr-head); }
+.rest.on.over .rest-lbl { color: var(--wc-ink); font-weight: 600; }
 
 @media (max-width: 380px) {
   .steppers { grid-template-columns: 1fr; }

@@ -20,50 +20,51 @@ groups:
 #   barbells 2.5 (1.25 kg plate each side), dumbbells 2, machines/stacks 5.
 #   Change any that don't match your gym.
 # Bodyweight exercises: log 0 kg, progress is tracked on reps.
+# demo = picture and instructions from the built-in exercise library (optional).
 exercises:
   # Chest
-  Incline Barbell Bench Press: {group: chest, step: 2.5}
-  Dumbbell Bench Press:        {group: chest, step: 2}
-  Chest Press Machine:         {group: chest, step: 5}
-  Pec Deck:                    {group: chest, step: 5}
+  Incline Barbell Bench Press: {group: chest, step: 2.5, demo: Barbell_Incline_Bench_Press_-_Medium_Grip}
+  Dumbbell Bench Press:        {group: chest, step: 2, demo: Dumbbell_Bench_Press}
+  Chest Press Machine:         {group: chest, step: 5, demo: Leverage_Chest_Press}
+  Pec Deck:                    {group: chest, step: 5, demo: Butterfly}
 
   # Shoulders
-  Overhead Barbell Press:      {group: shoulders, step: 2.5}
-  Shoulder Press Machine:      {group: shoulders, step: 5}
-  Dumbbell Lateral Raise:      {group: shoulders, step: 2}
-  Lateral Raise Machine:       {group: shoulders, step: 5}
-  Front Raise:                 {group: shoulders, step: 2}
-  Shrugs:                      {group: shoulders, step: 2}
+  Overhead Barbell Press:      {group: shoulders, step: 2.5, demo: Standing_Military_Press}
+  Shoulder Press Machine:      {group: shoulders, step: 5, demo: Leverage_Shoulder_Press}
+  Dumbbell Lateral Raise:      {group: shoulders, step: 2, demo: Side_Lateral_Raise}
+  Lateral Raise Machine:       {group: shoulders, step: 5, demo: Seated_Side_Lateral_Raise}
+  Front Raise:                 {group: shoulders, step: 2, demo: Front_Dumbbell_Raise}
+  Shrugs:                      {group: shoulders, step: 2, demo: Dumbbell_Shrug}
 
   # Back
-  Lat Pulldown:                {group: back, step: 5}
-  Close-Grip Pulldown:         {group: back, step: 5}
-  Seated Cable Row:            {group: back, step: 5}
-  Seated Row Machine:          {group: back, step: 5}
-  Back Extension:              {group: back, step: 2.5}
+  Lat Pulldown:                {group: back, step: 5, demo: Wide-Grip_Lat_Pulldown}
+  Close-Grip Pulldown:         {group: back, step: 5, demo: Close-Grip_Front_Lat_Pulldown}
+  Seated Cable Row:            {group: back, step: 5, demo: Seated_Cable_Rows}
+  Seated Row Machine:          {group: back, step: 5, demo: Leverage_Iso_Row}
+  Back Extension:              {group: back, step: 2.5, demo: Hyperextensions_Back_Extensions}
 
   # Legs
-  Leg Press:                   {group: legs, step: 5}
-  Leg Extension:               {group: legs, step: 5}
-  Seated Leg Curl:             {group: legs, step: 5}
-  Hip Abductor:                {group: legs, step: 5}
-  Hip Adductor:                {group: legs, step: 5}
-  Standing Calf Raise:         {group: legs, step: 5}
+  Leg Press:                   {group: legs, step: 5, demo: Leg_Press}
+  Leg Extension:               {group: legs, step: 5, demo: Leg_Extensions}
+  Seated Leg Curl:             {group: legs, step: 5, demo: Seated_Leg_Curl}
+  Hip Abductor:                {group: legs, step: 5, demo: Thigh_Abductor}
+  Hip Adductor:                {group: legs, step: 5, demo: Thigh_Adductor}
+  Standing Calf Raise:         {group: legs, step: 5, demo: Standing_Calf_Raises}
 
   # Biceps
-  Barbell Curl:                {group: biceps, step: 2.5}
-  Dumbbell Curl:               {group: biceps, step: 2}
-  Biceps Curl Machine:         {group: biceps, step: 5}
-  Hammer Curl:                 {group: biceps, step: 2}
-  Incline Dumbbell Curl:       {group: biceps, step: 2}
+  Barbell Curl:                {group: biceps, step: 2.5, demo: Barbell_Curl}
+  Dumbbell Curl:               {group: biceps, step: 2, demo: Dumbbell_Bicep_Curl}
+  Biceps Curl Machine:         {group: biceps, step: 5, demo: Machine_Bicep_Curl}
+  Hammer Curl:                 {group: biceps, step: 2, demo: Hammer_Curls}
+  Incline Dumbbell Curl:       {group: biceps, step: 2, demo: Incline_Dumbbell_Curl}
 
   # Triceps
-  Cable Pushdown:              {group: triceps, step: 2.5}
-  Rope Pushdown:               {group: triceps, step: 2.5}
-  Overhead Dumbbell Extension: {group: triceps, step: 2}
-  Triceps Extension Machine:   {group: triceps, step: 5}
-  Dips:                        {group: triceps, step: 5}
+  Cable Pushdown:              {group: triceps, step: 2.5, demo: Triceps_Pushdown}
+  Rope Pushdown:               {group: triceps, step: 2.5, demo: Triceps_Pushdown_-_Rope_Attachment}
+  Overhead Dumbbell Extension: {group: triceps, step: 2, demo: Standing_Dumbbell_Triceps_Extension}
+  Triceps Extension Machine:   {group: triceps, step: 5, demo: Machine_Triceps_Extension}
+  Dips:                        {group: triceps, step: 5, demo: Dips_-_Triceps_Version}
 
   # Abs
-  Crunches:                    {group: abs, step: 2.5}
-  Hanging Leg Raise:           {group: abs, step: 2.5}
+  Crunches:                    {group: abs, step: 2.5, demo: Crunches}
+  Hanging Leg Raise:           {group: abs, step: 2.5, demo: Hanging_Leg_Raise}
