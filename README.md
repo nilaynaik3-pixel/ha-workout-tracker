@@ -9,10 +9,10 @@ progression advice, and see how your training is going. Nothing leaves your
 Home Assistant.
 
 <p>
-  <img src="docs/1-workout-phone-light.png" width="260" alt="Workout tab">
-  <img src="docs/2-overview-phone-light-1.png" width="260" alt="Overview tab">
-  <img src="docs/1-workout-phone-dark.png" width="260" alt="Workout tab, dark theme">
+  <img src="docs/workout-phone.png" width="260" alt="Workout tab on a phone">
+  <img src="docs/overview-phone.png" width="260" alt="Overview tab on a phone">
 </p>
+<p><img src="docs/workout-desktop.png" width="800" alt="Workout tab on a large screen"></p>
 
 ## Features
 
@@ -45,7 +45,7 @@ Home Assistant.
 - **Several people**: everyone with a Home Assistant login gets their own
   tracker, with a name picker for shared tablets.
 - **CSV export** of everything.
-- Light and dark themes follow Home Assistant.
+- A dark design with a side rail on large screens and a bottom bar on phones.
 
 ## Install with HACS
 

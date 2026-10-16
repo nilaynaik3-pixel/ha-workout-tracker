@@ -29,7 +29,7 @@ from .tracker import Hub
 _LOGGER = logging.getLogger(__name__)
 
 DOMAIN = "workout_tracker"
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 PANEL_URL = "workout"
 STATIC_URL = "/workout_tracker/static"
 EXPORT_URL = "/workout_tracker/export"
