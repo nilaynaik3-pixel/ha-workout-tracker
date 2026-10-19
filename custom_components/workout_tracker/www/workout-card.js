@@ -21,7 +21,7 @@ const ACTIONS = {
   start: { cls: "new", verb: (w) => (w ? `Start around ${w} kg` : "Find your weight") },
 };
 const RPES = [6, 7, 7.5, 8, 8.5, 9, 9.5, 10];
-const WT_VERSION = "1.3.0";
+const WT_VERSION = "1.3.1";
 const REST_CHOICES = [0, 60, 90, 120, 180];
 
 const esc = (s) =>
@@ -193,6 +193,20 @@ function wtIsDarkTheme(el, hass) {
   if (!m) return false;
   const [r, g, b] = m.slice(1, 4).map(Number);
   return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 > 0.6;
+}
+
+/**
+ * The card's frame (styles + ha-card) is made once; renders only replace
+ * what's inside it. A new ha-card draws itself a moment after it's created,
+ * so rebuilding it each time briefly emptied the page and the browser
+ * jumped back to the top.
+ */
+function wtBody(el, css) {
+  if (!el._wtFrame || !el._wtFrame.isConnected) {
+    el.shadowRoot.innerHTML = `<style>${css}</style><ha-card><div class="wt-body"></div></ha-card>`;
+    el._wtFrame = el.shadowRoot.querySelector(".wt-body");
+  }
+  return el._wtFrame;
 }
 
 function localISO(offsetDays) {
@@ -593,19 +607,19 @@ class WorkoutCard extends HTMLElement {
     const sel = this._st("pyscript.workout_selected");
 
     if (!plan || !view) {
-      this.shadowRoot.innerHTML = `<style>${CSS}</style><ha-card><div class="wc empty card">
+      wtBody(this, CSS).innerHTML = `<div class="wc empty card">
         <p class="big">${WT.integration(this._hass) ? "Loading\u2026" : "Waiting for the tracker"}</p>
         <p>The workout entities don't exist yet. Check that Pyscript is installed with
         "Allow all imports" on, then look in Settings \u2192 System \u2192 Logs for <code>pyscript</code>.</p>
-      </div></ha-card>`;
+      </div>`;
       return;
     }
 
     // keep focus/caret for the text field across re-renders
     const active = this.shadowRoot.activeElement?.id;
 
-    this.shadowRoot.innerHTML = `<style>${CSS}</style>
-      <ha-card><div class="wc"><div class="cols">
+    wtBody(this, CSS).innerHTML = `
+      <div class="wc"><div class="cols">
         <div class="card col-a">
           ${this._renderDay(plan, view)}
           ${this._renderExercises(view, sel)}
@@ -614,7 +628,7 @@ class WorkoutCard extends HTMLElement {
           ${sel && sel.state !== "none" ? this._renderLog(sel) + this._renderHistory(sel) : `<p class="hint">Pick an exercise to start logging.</p>`}
         </div>
         <div class="card col-c">${this._renderManage(plan, sel)}</div>
-      </div></div></ha-card>`;
+      </div></div>`;
 
     if (active === "new-name" || active === "lib-q") {
       const el = this.shadowRoot.getElementById(active);
@@ -1466,8 +1480,8 @@ class WorkoutOverviewCard extends HTMLElement {
     }
     const st = wtGet(this._hass, "stats");
     if (!st) {
-      this.shadowRoot.innerHTML = `<style>${CSS}${OV_CSS}</style><ha-card><div class="wc empty">
-        <p class="big">No stats yet</p><p>Update <code>workout.py</code> and reload it, then log a set.</p></div></ha-card>`;
+      wtBody(this, CSS + OV_CSS).innerHTML = `<div class="wc empty">
+        <p class="big">No stats yet</p><p>Update <code>workout.py</code> and reload it, then log a set.</p></div>`;
       return;
     }
     this._dark = this.hasAttribute("data-dark");
@@ -1477,8 +1491,8 @@ class WorkoutOverviewCard extends HTMLElement {
     const wide = W > 720;
     const colW = wide ? (W - 54) / 2 : W;
 
-    this.shadowRoot.innerHTML = `<style>${CSS}${OV_CSS}</style>
-      <ha-card><div class="wc ov ${wide ? "wide" : ""}">
+    wtBody(this, CSS + OV_CSS).innerHTML = `
+      <div class="wc ov ${wide ? "wide" : ""}">
         ${this._week(a)}
         <div class="grid">
           ${this._progress(a, W)}
@@ -1492,7 +1506,7 @@ class WorkoutOverviewCard extends HTMLElement {
           ${this._export()}
         </div>
         <div id="tip" class="tip" role="tooltip" hidden></div>
-      </div></ha-card>`;
+      </div>`;
     this._wireLine();
     if (this._scrollToDay && this._dayData()) {
       this._scrollToDay = false;
