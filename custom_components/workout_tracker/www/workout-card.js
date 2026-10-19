@@ -21,7 +21,7 @@ const ACTIONS = {
   start: { cls: "new", verb: (w) => (w ? `Start around ${w} kg` : "Find your weight") },
 };
 const RPES = [6, 7, 7.5, 8, 8.5, 9, 9.5, 10];
-const WT_VERSION = "1.3.1";
+const WT_VERSION = "1.3.2";
 const REST_CHOICES = [0, 60, 90, 120, 180];
 
 const esc = (s) =>
@@ -206,7 +206,42 @@ function wtBody(el, css) {
     el.shadowRoot.innerHTML = `<style>${css}</style><ha-card><div class="wt-body"></div></ha-card>`;
     el._wtFrame = el.shadowRoot.querySelector(".wt-body");
   }
-  return el._wtFrame;
+  const frame = el._wtFrame;
+  // Assigning innerHTML goes through wtPaint, which keeps the scroll position.
+  return { set innerHTML(html) { wtPaint(el, frame, html); } };
+}
+
+/** Everything that scrolls around `el`: the page and any scrolling box
+ * Home Assistant puts the panel in (looking through shadow roots). */
+function wtScrollers(el) {
+  const out = [];
+  let n = el;
+  while (n) {
+    if (n.nodeType === 1 && n.scrollHeight > n.clientHeight + 1) out.push(n);
+    n = n.parentNode || n.host || null;
+  }
+  const doc = document.scrollingElement || document.documentElement;
+  if (!out.includes(doc)) out.push(doc);
+  return out;
+}
+
+/** Redraw a card's contents without moving the page. */
+function wtPaint(el, frame, html) {
+  const h = el.offsetHeight;
+  const keep = h ? wtScrollers(el).map((n) => [n, n.scrollTop]).filter(([, t]) => t > 0) : [];
+  if (h) el.style.minHeight = `${h}px`;
+  frame.innerHTML = html;
+  const restore = () => keep.forEach(([n, t]) => { if (Math.abs(n.scrollTop - t) > 1) n.scrollTop = t; });
+  restore();
+  if (el._wtScrollsItself) {          // the card scrolls somewhere on purpose right after
+    el._wtScrollsItself = false;
+    requestAnimationFrame(() => { el.style.minHeight = ""; });
+    return;
+  }
+  requestAnimationFrame(() => {
+    restore();
+    requestAnimationFrame(() => { el.style.minHeight = ""; restore(); });
+  });
 }
 
 function localISO(offsetDays) {
@@ -1471,13 +1506,6 @@ class WorkoutOverviewCard extends HTMLElement {
   // ------------------------------------------------------------- render
   _render() {
     if (!this._hass) return;
-    // Hold the current height during the rebuild: a momentarily empty card
-    // would shrink the page and the browser would snap back to the top.
-    const h = this.offsetHeight;
-    if (h) {
-      this.style.minHeight = `${h}px`;
-      requestAnimationFrame(() => requestAnimationFrame(() => { this.style.minHeight = ""; }));
-    }
     const st = wtGet(this._hass, "stats");
     if (!st) {
       wtBody(this, CSS + OV_CSS).innerHTML = `<div class="wc empty">
@@ -1491,6 +1519,7 @@ class WorkoutOverviewCard extends HTMLElement {
     const wide = W > 720;
     const colW = wide ? (W - 54) / 2 : W;
 
+    this._wtScrollsItself = !!(this._scrollToDay && this._dayData());
     wtBody(this, CSS + OV_CSS).innerHTML = `
       <div class="wc ov ${wide ? "wide" : ""}">
         ${this._week(a)}
@@ -2462,6 +2491,7 @@ main { padding: 22px 32px 40px; min-width: 0; }
 .page.workout { max-width: 1240px; }
 .page.overview { max-width: 1240px; }
 [hidden] { display: none !important; }
+.ver { margin: 28px 0 0; color: var(--faint); font-size: 12px; text-align: center; }
 @media (max-width: 760px) {
   .app { grid-template-columns: 1fr; }
   nav { position: fixed; bottom: 0; left: 0; right: 0; top: auto; height: auto; flex-direction: row; justify-content: space-around;
@@ -2520,6 +2550,7 @@ class WorkoutTrackerPanel extends HTMLElement {
           </header>
           <div class="page workout" id="p-workout"></div>
           <div class="page overview" id="p-overview"></div>
+          <footer class="ver">Workout Tracker ${WT_VERSION}</footer>
         </main>
       </div>`;
     this._menu = document.createElement("ha-menu-button");
