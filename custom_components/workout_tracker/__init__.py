@@ -29,7 +29,7 @@ from .tracker import Hub
 _LOGGER = logging.getLogger(__name__)
 
 DOMAIN = "workout_tracker"
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 PANEL_URL = "workout"
 STATIC_URL = "/workout_tracker/static"
 EXPORT_URL = "/workout_tracker/export"
@@ -68,7 +68,8 @@ SERVICES = {
     "med_save": ("med_save", ["name", "schedule", "kind", "dose", "note", "echo", "med_id"]),
     "med_delete": ("med_delete", ["med_id"]),
     "med_pause": ("med_pause", ["med_id", "paused"]),
-    "med_log": ("med_log", ["med_id", "status", "due"]),
+    "med_log": ("med_log", ["med_id", "status", "due", "at"]),
+    "med_update": ("med_update", ["log_id", "status", "at"]),
     "med_undo": ("med_undo", ["log_id"]),
 }
 

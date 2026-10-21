@@ -90,6 +90,33 @@ class DoseTest(unittest.TestCase):
         today = md.doses_on(md.list_meds(self.db), MON, md._logs(self.db, "2026-10-01"), now)
         self.assertEqual(today[0]["status"], "due")
 
+    def test_taken_at_and_editing_logs(self):
+        now = at(1, "09:00")
+        # yesterday's 20:00 dose was missed; mark it taken at the dose time
+        lid = md.log_dose(self.db, self.vit, "taken", f"{MON} 20:00", now=now, at=f"{MON} 20:00")
+        logs = md._logs(self.db, "2026-10-01")
+        self.assertEqual(logs[-1]["ts"], f"{MON} 20:00")
+        # change it: taken at 21:15 (time only = on the dose's day)
+        md.update_log(self.db, lid, "taken", "21:15")
+        self.assertEqual(md._logs(self.db, "2026-10-01")[-1]["ts"], f"{MON} 21:15")
+        md.update_log(self.db, lid, "skipped")
+        d = md.doses_on(md.list_meds(self.db), MON, md._logs(self.db, "2026-10-01"), now)
+        self.assertEqual([(x["time"], x["status"], x["at"]) for x in d if x["name"] == "Vitamin D"],
+                         [("08:00", "missed", None), ("20:00", "skipped", "21:15")])
+        # an as-needed dose: change its time
+        aid = md.log_dose(self.db, self.para, "taken", now=at(1, "10:00"))
+        md.update_log(self.db, aid, at="09:30")
+        self.assertEqual(md._logs(self.db, "2026-10-01")[-1]["ts"], f"{MON + timedelta(days=1)} 09:30")
+        with self.assertRaises(ValueError):
+            md.update_log(self.db, 9999, "taken")
+        with self.assertRaises(ValueError):
+            md.update_log(self.db, aid, "eaten")
+        # the overview has two weeks of days, newest first
+        o = md.overview(self.db, now)
+        self.assertEqual(len(o["days"]), 14)
+        self.assertEqual(o["days"][0]["day"], (MON + timedelta(days=1)).isoformat())
+        self.assertEqual(o["days"][1]["day"], MON.isoformat())
+
     def test_pause_edit_delete(self):
         md.set_paused(self.db, self.vit, True)
         self.assertEqual(md.doses_on(md.list_meds(self.db), MON, [], at(0, "09:00")), [])

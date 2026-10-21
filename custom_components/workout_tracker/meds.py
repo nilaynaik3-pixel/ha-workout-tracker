@@ -219,12 +219,28 @@ def delete_med(db_path, med_id):
 # Doses
 # --------------------------------------------------------------------------
 
-def log_dose(db_path, med_id, status, due=None, now=None):
+def _at(at, due, now):
+    """When it was taken: 'HH:MM' (on the dose's day, else today) or a full
+    'YYYY-MM-DD HH:MM'; default now."""
+    if not at:
+        return _now(now)
+    at = str(at).strip()
+    if re.fullmatch(r"\d{1,2}:\d{2}", at):
+        day = datetime.fromisoformat(str(due)).date() if due else _now(now).date()
+        h, m = map(int, at.split(":"))
+        if h > 23 or m > 59:
+            raise ValueError(f"not a time: {at}")
+        return datetime.combine(day, datetime.min.time()).replace(hour=h, minute=m)
+    return datetime.fromisoformat(at).replace(second=0, microsecond=0)
+
+
+def log_dose(db_path, med_id, status, due=None, now=None, at=None):
     """Taken or skipped. For a scheduled dose `due` is 'YYYY-MM-DD HH:MM';
-    logging the same dose again replaces the earlier entry."""
+    logging the same dose again replaces the earlier entry. `at` = when it
+    was taken (default now)."""
     if status not in ("taken", "skipped"):
         raise ValueError("status must be taken or skipped")
-    ts = _now(now).isoformat(sep=" ", timespec="minutes")
+    ts = _at(at, due, now).isoformat(sep=" ", timespec="minutes")
     con = _connect(db_path)
     with con:
         if due:
@@ -235,6 +251,26 @@ def log_dose(db_path, med_id, status, due=None, now=None):
         log_id = cur.lastrowid
     con.close()
     return log_id
+
+
+def update_log(db_path, log_id, status=None, at=None):
+    """Change a logged dose: taken / skipped, and when."""
+    con = _connect(db_path)
+    row = con.execute("SELECT due, ts, status FROM med_log WHERE id = ?", (int(log_id),)).fetchone()
+    if not row:
+        con.close()
+        raise ValueError("that dose isn't logged")
+    status = status or row["status"]
+    if status not in ("taken", "skipped"):
+        con.close()
+        raise ValueError("status must be taken or skipped")
+    ts = row["ts"]
+    if at:
+        base = row["due"] or row["ts"][:10] + " 00:00"
+        ts = _at(at, base, None).isoformat(sep=" ", timespec="minutes")
+    with con:
+        con.execute("UPDATE med_log SET status = ?, ts = ? WHERE id = ?", (status, ts, int(log_id)))
+    con.close()
 
 
 def undo_log(db_path, log_id):
@@ -318,6 +354,9 @@ def overview(db_path, now=None, days=HISTORY_DAYS):
     all_c = all_t + sum(t["missed"] for t in totals.values())
     return {
         "today": doses_on(meds, today, logs, now),
+        # the last two weeks, newest first, to look back and fix days
+        "days": [{"day": (today - timedelta(days=i)).isoformat(),
+                  "doses": doses_on(meds, today - timedelta(days=i), logs, now)} for i in range(14)],
         "meds": meds,
         "adherence": round(100 * all_t / all_c) if all_c else None,
         "recent": [{**l, "name": next((m["name"] for m in meds if m["id"] == l["med_id"]), "?")}
@@ -497,10 +536,14 @@ class MedsMixin:
         await self.run(set_paused, self.db, med_id, _truthy(paused) if not isinstance(paused, bool) else paused)
         await self.publish(("meds",))
 
-    async def med_log(self, med_id, status="taken", due=None):
-        await self.run(lambda: log_dose(self.db, med_id, status, due or None))
+    async def med_log(self, med_id, status="taken", due=None, at=None):
+        await self.run(lambda: log_dose(self.db, med_id, status, due or None, None, at or None))
         if due:
             await self._clear_notification(int(med_id), datetime.fromisoformat(str(due)).strftime("%Y-%m-%d %H:%M"))
+        await self.publish(("meds",))
+
+    async def med_update(self, log_id, status=None, at=None):
+        await self.run(lambda: update_log(self.db, log_id, status or None, at or None))
         await self.publish(("meds",))
 
     async def med_undo(self, log_id):

@@ -46,7 +46,8 @@ Home Assistant.
   meetings (daily every N days, weekly on chosen days, one or more times a
   day, start and end date, or as needed), reminders on your phone with
   Taken / Skip buttons and on the Echo when you're home, one more reminder
-  after 30 minutes, and history with % taken.
+  after 30 minutes, and history with % taken. Edit any medicine, its
+  schedule, or a logged dose (taken or skipped, and when), also for past days.
 - **Several people**: everyone with a Home Assistant login gets their own
   tracker, with a name picker for shared tablets.
 - **CSV export** of everything.

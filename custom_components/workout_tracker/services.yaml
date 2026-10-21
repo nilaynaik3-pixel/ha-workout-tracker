@@ -403,6 +403,32 @@ med_log:
       description: 'YYYY-MM-DD HH:MM of the dose; leave empty for an as-needed dose'
       selector:
         text: {}
+    at:
+      name: Taken at
+      description: 'HH:MM (on the dose''s day) or YYYY-MM-DD HH:MM; default now'
+      selector:
+        text: {}
+med_update:
+  name: Change a logged dose
+  fields:
+    log_id:
+      name: Log id
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 1000000
+          mode: box
+    status:
+      name: Status
+      selector:
+        select:
+          options: [taken, skipped]
+    at:
+      name: Taken at
+      description: 'HH:MM or YYYY-MM-DD HH:MM'
+      selector:
+        text: {}
 med_undo:
   name: Undo a logged dose
   fields:

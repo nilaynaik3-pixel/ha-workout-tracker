@@ -21,7 +21,7 @@ const ACTIONS = {
   start: { cls: "new", verb: (w) => (w ? `Start around ${w} kg` : "Find your weight") },
 };
 const RPES = [6, 7, 7.5, 8, 8.5, 9, 9.5, 10];
-const WT_VERSION = "1.4.0";
+const WT_VERSION = "1.4.1";
 const REST_CHOICES = [0, 60, 90, 120, 180];
 
 const esc = (s) =>
@@ -2488,6 +2488,8 @@ class WorkoutMedsCard extends HTMLElement {
     super();
     this.attachShadow({ mode: "open" });
     this._form = null;      // med being added or edited
+    this._dayIdx = 0;       // 0 = today, 1 = yesterday ... 13
+    this._edit = null;      // dose being edited: "med_id|due" or "log:<id>"
     this._err = "";
     this._msg = "";
     loadFont();
@@ -2551,10 +2553,35 @@ class WorkoutMedsCard extends HTMLElement {
     switch (a) {
       case "taken":
       case "skip":
+        // today: taken now; on a past day: taken at the dose time (change it with Edit)
         this._do("workout_med_log", { med_id: Number(b.dataset.id), status: a === "taken" ? "taken" : "skipped",
-          due: b.dataset.due || null });
+          due: b.dataset.due || null, ...(this._dayIdx ? { at: b.dataset.due } : {}) });
         break;
-      case "undo": this._do("workout_med_undo", { log_id: Number(b.dataset.log) }); break;
+      case "day-prev": this._dayIdx = Math.min(13, this._dayIdx + 1); this._edit = null; this._render(); break;
+      case "day-next": this._dayIdx = Math.max(0, this._dayIdx - 1); this._edit = null; this._render(); break;
+      case "dose-edit": this._edit = b.dataset.key; this._render(); break;
+      case "dose-cancel": this._edit = null; this._render(); break;
+      case "dose-status": {
+        const row = b.closest(".dedit");
+        row.querySelectorAll("[data-a=dose-status]").forEach((x) => x.classList.toggle("sel", x === b));
+        break;
+      }
+      case "dose-save": {
+        const row = b.closest(".dedit");
+        const status = row.querySelector("[data-a=dose-status].sel")?.dataset.v || "taken";
+        const at = row.querySelector("input[type=time]")?.value || null;
+        const done = () => { this._edit = null; this._render(); };
+        if (b.dataset.log) this._do("workout_med_update", { log_id: Number(b.dataset.log), status, at }, "Saved.").then((ok) => ok && done());
+        else this._do("workout_med_log", { med_id: Number(b.dataset.id), status, due: b.dataset.due, at }, "Saved.").then((ok) => ok && done());
+        break;
+      }
+      case "times-n": {
+        const presets = { 1: ["08:00"], 2: ["08:00", "20:00"], 3: ["08:00", "14:00", "20:00"], 4: ["08:00", "12:00", "16:00", "20:00"] };
+        f.schedule.times = [...presets[b.dataset.v]];
+        this._render();
+        break;
+      }
+      case "undo": this._edit = null; this._do("workout_med_undo", { log_id: Number(b.dataset.log) }); break;
       case "log-now": {
         const m = (d.meds || []).find((x) => x.id === Number(b.dataset.id));
         this._do("workout_med_log", { med_id: Number(b.dataset.id), status: "taken" }, `Logged ${m ? m.name : "it"}.`);
@@ -2604,14 +2631,20 @@ class WorkoutMedsCard extends HTMLElement {
   _onInput(e) {
     const t = e.target;
     const f = this._form;
-    if (!f || !t.id) return;
+    if (!f) return;
+    if (t.dataset.time !== undefined) {           // time boxes have no id
+      f.schedule.times[Number(t.dataset.time)] = t.value;
+      const p = this.shadowRoot.getElementById("m-preview");
+      if (p) p.textContent = medDescribe(f.schedule);
+      return;
+    }
+    if (!t.id) return;
     if (t.id === "m-name") f.name = t.value;
     else if (t.id === "m-dose") f.dose = t.value;
     else if (t.id === "m-note") f.note = t.value;
     else if (t.id === "m-every") f.schedule.every = Math.max(1, Math.min(365, Number(t.value) || 1));
     else if (t.id === "m-start" && t.value) f.schedule.start = t.value;
     else if (t.id === "m-end" && t.value) f.schedule.end = t.value;
-    else if (t.dataset.time !== undefined) f.schedule.times[Number(t.dataset.time)] = t.value;
     else return;
     const p = this.shadowRoot.getElementById("m-preview");
     if (p) p.textContent = medDescribe(f.schedule);
@@ -2658,30 +2691,54 @@ class WorkoutMedsCard extends HTMLElement {
   }
 
   _today(d) {
-    const sched = d.today.filter((x) => !x.as_needed);
+    const days = d.days || [{ day: localISO(0), doses: d.today }];
+    const idx = Math.min(this._dayIdx, days.length - 1);
+    const view = days[idx];
+    const isToday = idx === 0;
+    const label = isToday ? "Today" : idx === 1 ? "Yesterday" : fmtDayLong(view.day);
+    const sched = view.doses.filter((x) => !x.as_needed);
+    const loggedAN = view.doses.filter((x) => x.as_needed);
     const asNeeded = d.meds.filter((m) => m.schedule.repeat === "none" && !m.paused);
-    const takenAN = d.today.filter((x) => x.as_needed);
-    const rows = sched.map((x) => {
+    const row = (x) => {
+      const key = x.log_id && x.as_needed ? `log:${x.log_id}` : `${x.med_id}|${x.due}`;
       const what = `<b>${esc(x.name)}</b>${x.dose ? ` <span>${esc(x.dose)}</span>` : ""}${x.note ? `<small>${esc(x.note)}</small>` : ""}`;
+      if (this._edit === key) {
+        const st = x.status === "skipped" ? "skipped" : "taken";
+        const at = x.at || (isToday && x.status === "due" ? `${String(new Date().getHours()).padStart(2, "0")}:${String(new Date().getMinutes()).padStart(2, "0")}` : x.time);
+        return `<li class="dose dedit"><time>${esc(x.time)}</time><div class="what">${what}
+          <div class="erow"><div class="seg"><button class="${st === "taken" ? "sel" : ""}" data-a="dose-status" data-v="taken">Taken</button><button class="${st === "skipped" ? "sel" : ""}" data-a="dose-status" data-v="skipped">Skipped</button></div>
+            <label class="inl">at <input type="time" value="${esc(at)}" aria-label="Taken at"></label></div>
+          <div class="erow"><button class="btn solid" data-a="dose-save" data-id="${x.med_id}" data-due="${esc(x.due || "")}" ${x.log_id ? `data-log="${x.log_id}"` : ""}>Save</button>
+            ${x.log_id ? `<button class="link quiet" data-a="undo" data-log="${x.log_id}">${x.as_needed ? "Delete" : "Clear"}</button>` : ""}
+            <button class="link quiet" data-a="dose-cancel">Cancel</button></div></div></li>`;
+      }
       let right;
-      if (x.status === "taken") right = `<span class="st ok">\u2713 Taken ${esc(x.at || "")}</span><button class="link quiet" data-a="undo" data-log="${x.log_id}">Undo</button>`;
-      else if (x.status === "skipped") right = `<span class="st">Skipped</span><button class="link quiet" data-a="undo" data-log="${x.log_id}">Undo</button>`;
-      else right = `<button class="btn ${x.status === "due" ? "solid" : ""}" data-a="taken" data-id="${x.med_id}" data-due="${esc(x.due)}">Taken</button>
-        <button class="link quiet" data-a="skip" data-id="${x.med_id}" data-due="${esc(x.due)}">Skip</button>`;
+      const edit = `<button class="link quiet" data-a="dose-edit" data-key="${esc(key)}">Edit</button>`;
+      if (x.status === "taken") right = `<span class="st ok">\u2713 Taken ${esc(x.at || "")}</span>${edit}`;
+      else if (x.status === "skipped") right = `<span class="st">Skipped</span>${edit}`;
+      else right = `${x.status === "missed" ? `<span class="st bad">Missed</span>` : ""}
+        <button class="btn ${x.status === "due" ? "solid" : ""}" data-a="taken" data-id="${x.med_id}" data-due="${esc(x.due)}">Taken</button>
+        <button class="link quiet" data-a="skip" data-id="${x.med_id}" data-due="${esc(x.due)}">Skip</button>${edit}`;
       return `<li class="dose ${x.status}"><time>${esc(x.time)}</time><div class="what">${what}</div><div class="acts">${right}</div></li>`;
-    }).join("");
+    };
     const pct = d.adherence;
     const echo = !d.echo ? "No Echo found, so reminders go to your phone only."
       : `Reminders go to your phone${d.phone ? "" : " (no phone found)"}, and to the Echo${d.echo.via === "say" ? " in the house personality" : ""} when you're home.`;
-    return `<div class="thead"><h2>Today</h2>${pct != null ? `<span class="pill" title="Doses taken of all scheduled doses, last 30 days">${pct}% taken \u00B7 30 days</span>` : ""}</div>
+    return `<div class="thead">
+        <div class="dnav"><button data-a="day-prev" ${idx >= days.length - 1 ? "disabled" : ""} aria-label="Previous day">\u2039</button>
+          <h2>${esc(label)}</h2>
+          <button data-a="day-next" ${isToday ? "disabled" : ""} aria-label="Next day">\u203A</button></div>
+        ${pct != null ? `<span class="pill" title="Doses taken of all scheduled doses, last 30 days">${pct}% taken \u00B7 30 days</span>` : ""}</div>
       ${this._flash()}
-      ${sched.length ? `<ol class="doses">${rows}</ol>` : `<p class="hint">${d.meds.length ? "Nothing scheduled today." : "No medicines yet. Add your first one."}</p>`}
-      ${asNeeded.length ? `<h3>As needed</h3><ul class="an">${asNeeded.map((m) => {
-        const n = takenAN.filter((x) => x.med_id === m.id);
-        return `<li><div class="what"><b>${esc(m.name)}</b>${m.dose ? ` <span>${esc(m.dose)}</span>` : ""}${n.length ? `<small>Today at ${n.map((x) => esc(x.time)).join(", ")}</small>` : ""}</div>
-          <button class="btn" data-a="log-now" data-id="${m.id}">Took one</button></li>`;
+      ${sched.length ? `<ol class="doses">${sched.map(row).join("")}</ol>` : `<p class="hint">${d.meds.length ? `Nothing scheduled ${isToday ? "today" : "that day"}.` : "No medicines yet. Add your first one."}</p>`}
+      ${loggedAN.length && !isToday ? `<h3>As needed</h3><ol class="doses">${loggedAN.map(row).join("")}</ol>` : ""}
+      ${asNeeded.length && isToday ? `<h3>As needed</h3><ul class="an">${asNeeded.map((m) => {
+        const n = loggedAN.filter((x) => x.med_id === m.id);
+        return `<li><div class="what"><b>${esc(m.name)}</b>${m.dose ? ` <span>${esc(m.dose)}</span>` : ""}${n.length ? `<small>Today at ${n.map((x) => `<button class="link quiet tiny" data-a="dose-edit" data-key="log:${x.log_id}">${esc(x.time)}</button>`).join(", ")}</small>` : ""}</div>
+          <button class="btn" data-a="log-now" data-id="${m.id}">Took one</button></li>
+          ${n.filter((x) => this._edit === `log:${x.log_id}`).map(row).join("")}`;
       }).join("")}</ul>` : ""}
-      <p class="foot">${esc(echo)}</p>`;
+      <p class="foot">${esc(echo)}${isToday ? "" : " Tap Taken to mark a past dose; Edit to change the time."}</p>`;
   }
 
   _dots(m) {
@@ -2700,14 +2757,14 @@ class WorkoutMedsCard extends HTMLElement {
 
   _list(d) {
     const items = d.meds.map((m) => `<li class="${m.paused ? "paused" : ""}">
-      <div class="mhead"><b>${esc(m.name)}</b><span class="tag ${m.kind}">${m.kind === "supplement" ? "Supplement" : "Medication"}</span>
+      <div class="mhead"><button class="mname" data-a="edit" data-id="${m.id}" title="Edit">${esc(m.name)}</button><span class="tag ${m.kind}">${m.kind === "supplement" ? "Supplement" : "Medication"}</span>
         ${m.paused ? `<span class="tag">Paused</span>` : ""}
         ${m.adherence != null ? `<span class="pct">${m.adherence}%</span>` : ""}</div>
       <p class="sub">${esc([m.dose, m.note].filter(Boolean).join(" \u00B7 "))}</p>
       <p class="sched">${esc(m.summary)}${m.echo && m.schedule.repeat !== "none" ? "" : m.schedule.repeat !== "none" ? " \u00B7 phone only" : ""}</p>
       ${m.schedule.repeat !== "none" ? this._dots(m) : ""}
       <div class="macts">
-        <button class="link" data-a="edit" data-id="${m.id}">Edit</button>
+        <button class="link" data-a="edit" data-id="${m.id}">Edit medicine & schedule</button>
         <button class="link quiet" data-a="pause" data-id="${m.id}" data-on="${m.paused ? "1" : "0"}">${m.paused ? "Resume" : "Pause"}</button>
         <button class="link quiet" data-a="delete" data-id="${m.id}" data-name="${esc(m.name)}">Delete</button>
       </div>
@@ -2736,6 +2793,8 @@ class WorkoutMedsCard extends HTMLElement {
         ${s.repeat === "none" ? `<p class="hint">No reminders. Log a dose from Today when you take one.</p>` : `
           <div class="every">Every <input id="m-every" type="number" min="1" max="365" inputmode="numeric" value="${s.every}"> ${s.repeat === "daily" ? "day(s)" : "week(s)"}</div>
           ${s.repeat === "weekly" ? `<div class="wdays" role="group" aria-label="Weekdays">${WD1.map((l, i) => `<button class="${s.days.includes(i) ? "sel" : ""}" data-a="day" data-v="${i}" aria-pressed="${s.days.includes(i)}" title="${WD[i]}">${l}</button>`).join("")}</div>` : ""}
+          <span class="lbl">Times a day</span>
+          <div class="seg">${[1, 2, 3, 4].map((n) => seg("times-n", n, n === 1 ? "Once" : n === 2 ? "Twice" : `${n}\u00d7`, s.times.length === n)).join("")}</div>
           <span class="lbl">At</span>
           <div class="times">${s.times.map((t, i) => `<span class="time"><input type="time" data-time="${i}" value="${esc(t)}" aria-label="Time ${i + 1}">${s.times.length > 1 ? `<button class="x" data-a="time-del" data-i="${i}" aria-label="Remove this time">\u00D7</button>` : ""}</span>`).join("")}
             <button class="link" data-a="time-add">+ Add a time</button></div>
@@ -2766,7 +2825,7 @@ const MEDS_CSS = `
 h2 { margin: 0; font: 600 22px/1.2 var(--display); letter-spacing: -.01em; }
 h3 { margin: 16px 0 6px; font-size: 13px; font-weight: 500; color: var(--muted); }
 .pill { font-size: 13px; padding: 5px 10px; border-radius: 999px; background: rgba(92,200,180,.14); color: var(--presence); white-space: nowrap; }
-.btn { height: 38px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface-2); color: var(--text); font-weight: 600; }
+.btn { height: 38px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface-2); color: var(--text); font-weight: 600; white-space: nowrap; flex: none; }
 .btn.solid { background: var(--lamp); border-color: var(--lamp); color: #1b1406; }
 .flash { display: flex; justify-content: space-between; gap: 10px; align-items: center; margin: 0 0 12px; padding: 10px 12px;
   border-radius: 12px; background: rgba(92,200,180,.14); font-size: 14px; }
@@ -2816,7 +2875,20 @@ h3 { margin: 16px 0 6px; font-size: 13px; font-weight: 500; color: var(--muted);
 .legend { margin: 10px 0 0; font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .legend i { width: 10px; height: 10px; margin-left: 6px; }
 .legend i:first-child { margin-left: 0; }
-.macts { display: flex; gap: 16px; margin-top: 6px; }
+.macts { display: flex; gap: 16px; margin-top: 6px; flex-wrap: wrap; }
+.mname { font: 600 18px/1.2 var(--display); color: var(--text); background: none; border: 0; padding: 0; text-align: left; }
+.dnav { display: flex; align-items: center; gap: 6px; }
+.dnav button { width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface-2); color: var(--text); font-size: 20px; line-height: 1; }
+.dnav button:disabled { opacity: .3; cursor: default; }
+.dnav h2 { min-width: 6.5em; text-align: center; }
+.st.bad { color: var(--alert); font-weight: 600; }
+.dose.missed { border-left-color: var(--alert); }
+.dose.missed time { color: var(--alert); }
+.dose.dedit { grid-template-columns: 58px 1fr; border-left-color: var(--lamp); }
+.erow { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 10px; }
+.inl { flex-direction: row; align-items: center; gap: 8px; font-size: 14px; }
+.inl input { width: 130px; }
+.tiny { padding: 0; font-size: 12px; }
 .form-card h2 { margin-bottom: 12px; }
 .ferr { margin: 0 0 12px; padding: 8px 12px; border-radius: 10px; background: rgba(240,96,90,.16); font-size: 14px; }
 .f2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
