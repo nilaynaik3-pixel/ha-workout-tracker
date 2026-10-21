@@ -29,7 +29,7 @@ from .tracker import Hub
 _LOGGER = logging.getLogger(__name__)
 
 DOMAIN = "workout_tracker"
-VERSION = "1.3.2"
+VERSION = "1.4.0"
 PANEL_URL = "workout"
 STATIC_URL = "/workout_tracker/static"
 EXPORT_URL = "/workout_tracker/export"
@@ -65,6 +65,11 @@ SERVICES = {
     "gym_end": ("gym_left", []),
     "export": ("export", []),
     "refresh": ("refresh", []),
+    "med_save": ("med_save", ["name", "schedule", "kind", "dose", "note", "echo", "med_id"]),
+    "med_delete": ("med_delete", ["med_id"]),
+    "med_pause": ("med_pause", ["med_id", "paused"]),
+    "med_log": ("med_log", ["med_id", "status", "due"]),
+    "med_undo": ("med_undo", ["log_id"]),
 }
 
 
@@ -79,6 +84,10 @@ class HassHost:
 
     def entity_ids(self, domain):
         return self.hass.states.async_entity_ids(domain)
+
+    def state(self, entity_id):
+        st = self.hass.states.get(entity_id) if entity_id else None
+        return st.state if st else None
 
     def attributes(self, entity_id):
         st = self.hass.states.get(entity_id) if entity_id else None
@@ -322,6 +331,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.async_create_task(hub.midnight())
 
     unsubs.append(async_track_time_change(hass, at_midnight, hour=0, minute=5, second=0))
+
+    # ---- medication reminders: check every minute; buttons on the notifications
+    @callback
+    def every_minute(now) -> None:
+        hass.async_create_task(hub.meds_tick())
+
+    unsubs.append(async_track_time_change(hass, every_minute, second=0))
+
+    @callback
+    def is_med_action(event_data) -> bool:
+        return str(event_data.get("action", "")).startswith("WT_MED_")
+
+    @callback
+    def med_action(event: Event) -> None:
+        hass.async_create_task(hub.med_action(event.data["action"]))
+
+    unsubs.append(hass.bus.async_listen("mobile_app_notification_action", med_action, event_filter=is_med_action))
 
     for u in unsubs:
         entry.async_on_unload(u)

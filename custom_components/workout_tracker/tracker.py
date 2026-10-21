@@ -23,10 +23,12 @@ import time
 from datetime import date, timedelta
 
 from . import core as wc
+from .meds import MedsMixin
 
 _LOGGER = logging.getLogger(__name__)
 HISTORY = 3
-PARTS = ("plan", "view", "selected", "day", "stats", "export", "rest")
+PARTS = ("plan", "view", "selected", "day", "stats", "export", "rest", "meds")
+EVERYDAY = tuple(p for p in PARTS if p != "meds")   # what a workout change refreshes
 DEFAULT_REST = 90          # seconds between sets
 BUILTIN_CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "exercises.yaml")
 
@@ -35,7 +37,7 @@ def _truthy(v):
     return v in (True, "true", "on", 1, "1", "True")
 
 
-class Tracker:
+class Tracker(MedsMixin):
     def __init__(self, host, db_path, config_path, export_dir, export_url, options, listeners=None,
                  user_id=None, owner=True):
         self.host = host
@@ -59,6 +61,7 @@ class Tracker:
         self.prefs = {}
         self.rest = None            # {"exercise", "seconds", "started", "ends"} while running
         self._rest_cancel = None
+        self._meds_init()
         self.bundle = {k: {"state": "none", "attributes": {}, "last_updated": "0"} for k in PARTS}
         self._version = 0
         # shared with the websocket layer so open cards survive a reload
@@ -151,7 +154,7 @@ class Tracker:
     def _groups(self):
         return [self.main] + [g for g in self.cfg["addon"] if g in self.addons] if self.main else list(self.addons)
 
-    async def publish(self, parts=PARTS):
+    async def publish(self, parts=EVERYDAY):
         parts = set(parts)
         if "plan" in parts:
             p = await self.run(wc.plan, self.db, self.cfg)
@@ -201,6 +204,9 @@ class Tracker:
                 "phone": bool(self.notify),
                 **(self.rest or {}),
             })
+        if "meds" in parts:
+            m = await self.meds_part()
+            self._set("meds", len(m["today"]), m)
         if "export" in parts:
             if self.export_info:
                 self._set("export", self.export_info["created"], {"files": self.export_info["files"]})
@@ -216,7 +222,7 @@ class Tracker:
     async def start(self):
         await self.load()
         await self.apply_suggestion()
-        await self.publish()
+        await self.publish(PARTS)
 
     # ------------------------------------------------------- selection
     async def select_main(self, group):
@@ -503,11 +509,11 @@ class Tracker:
         self.last_pr = None
         await self.load()
         await self.apply_suggestion()
-        await self.publish()
+        await self.publish(PARTS)
 
     async def refresh(self):
         await self.load()
-        await self.publish()
+        await self.publish(PARTS)
 
 
 # --------------------------------------------------------------------------
@@ -598,3 +604,19 @@ class Hub:
     async def midnight(self):
         for t in list(self.trackers.values()):
             await t.midnight()
+
+    async def meds_tick(self, now=None):
+        for t in list(self.trackers.values()):
+            try:
+                await t.meds_tick(now)
+            except Exception as err:  # one person's problem shouldn't stop the others
+                _LOGGER.warning("workout_tracker: medication reminders failed: %s", err)
+
+    async def med_action(self, action):
+        """A Taken / Skip button on a reminder: WT_MED_TAKEN|<profile>|<med_id>|<due>."""
+        parts = str(action).split("|", 2)
+        if len(parts) != 3 or parts[0] not in ("WT_MED_TAKEN", "WT_MED_SKIP"):
+            return False
+        t = await self.get(parts[1] or None)
+        await t.med_action(parts[0][7:], parts[2])
+        return True

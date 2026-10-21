@@ -315,3 +315,102 @@ export:
   name: Export everything to CSV
 refresh:
   name: Reload the exercise list and settings
+med_save:
+  name: Add or change a medicine or supplement
+  fields:
+    med_id:
+      name: Id (leave empty to add a new one)
+      selector:
+        number:
+          min: 1
+          max: 100000
+          mode: box
+    name:
+      name: Name
+      required: true
+      selector:
+        text: {}
+    kind:
+      name: Type
+      selector:
+        select:
+          options: [medication, supplement]
+    dose:
+      name: Dose
+      example: 1 tablet
+      selector:
+        text: {}
+    note:
+      name: Note
+      example: with food
+      selector:
+        text: {}
+    echo:
+      name: Also on the Echo when home
+      selector:
+        boolean: {}
+    schedule:
+      name: Schedule
+      description: 'repeat: daily/weekly/none, every: N, days: [0-6, Monday = 0], times: ["08:00"], start: date, end: date or null'
+      required: true
+      example: '{"repeat": "daily", "every": 1, "times": ["08:00", "20:00"]}'
+      selector:
+        object: {}
+med_delete:
+  name: Delete a medicine (history is kept)
+  fields:
+    med_id:
+      name: Id
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 100000
+          mode: box
+med_pause:
+  name: Pause or resume a medicine's reminders
+  fields:
+    med_id:
+      name: Id
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 100000
+          mode: box
+    paused:
+      name: Paused
+      selector:
+        boolean: {}
+med_log:
+  name: Log a dose as taken or skipped
+  fields:
+    med_id:
+      name: Id
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 100000
+          mode: box
+    status:
+      name: Status
+      selector:
+        select:
+          options: [taken, skipped]
+    due:
+      name: Scheduled dose
+      description: 'YYYY-MM-DD HH:MM of the dose; leave empty for an as-needed dose'
+      selector:
+        text: {}
+med_undo:
+  name: Undo a logged dose
+  fields:
+    log_id:
+      name: Log id
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 1000000
+          mode: box

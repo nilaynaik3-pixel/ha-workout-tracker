@@ -21,7 +21,7 @@ const ACTIONS = {
   start: { cls: "new", verb: (w) => (w ? `Start around ${w} kg` : "Find your weight") },
 };
 const RPES = [6, 7, 7.5, 8, 8.5, 9, 9.5, 10];
-const WT_VERSION = "1.3.2";
+const WT_VERSION = "1.4.0";
 const REST_CHOICES = [0, 60, 90, 120, 180];
 
 const esc = (s) =>
@@ -2453,6 +2453,421 @@ if (!window.customCards.some((c) => c.type === "workout-overview-card")) window.
 });
 
 /* ======================================================================
+ * workout-meds-card: medication and supplement reminders.
+ *   type: custom:workout-meds-card
+ * ==================================================================== */
+
+const WD = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const WD1 = ["M", "T", "W", "T", "F", "S", "S"];
+
+/** Same wording as the server's describe(), for the live preview in the form. */
+function medDescribe(s) {
+  if (s.repeat === "none") return "As needed";
+  const t = [...new Set(s.times.filter(Boolean))].sort();
+  if (!t.length) return "Add a time";
+  const at = " at " + (t.length > 1 ? t.slice(0, -1).join(", ") + " and " + t[t.length - 1] : t[0]);
+  let base;
+  if (s.repeat === "daily") base = s.every > 1 ? `Every ${s.every} days` : "Every day";
+  else {
+    const d = [...s.days].sort();
+    if (!d.length) return "Pick at least one day";
+    const names = d.join() === "0,1,2,3,4" ? "weekday" : d.map((x) => WD[x]).join(", ");
+    base = (s.every > 1 ? `Every ${s.every} weeks` : "Every week") + ` on ${names}`;
+    if (d.length === 7 && s.every === 1) base = "Every day";
+  }
+  return base + at + (s.end ? `, until ${fmtDay(s.end)}` : "");
+}
+
+const blankMed = () => ({
+  med_id: null, name: "", kind: "medication", dose: "", note: "", echo: true,
+  schedule: { repeat: "daily", every: 1, days: [0, 1, 2, 3, 4], times: ["08:00"], start: localISO(0), end: null },
+});
+
+class WorkoutMedsCard extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this._form = null;      // med being added or edited
+    this._err = "";
+    this._msg = "";
+    loadFont();
+    this.shadowRoot.addEventListener("click", (e) => this._onClick(e));
+    this.shadowRoot.addEventListener("input", (e) => this._onInput(e));
+    this.shadowRoot.addEventListener("change", (e) => this._onInput(e));
+  }
+
+  setConfig(c) { this._config = c || {}; }
+  getCardSize() { return 8; }
+  getGridOptions() { return { columns: "full" }; }
+
+  connectedCallback() {
+    this._onStore = () => this._update();
+    WT.listeners.add(this._onStore);
+    // statuses change with the clock (upcoming -> due)
+    this._clock = setInterval(() => { this._key = null; this._update(); }, 60000);
+  }
+
+  disconnectedCallback() {
+    WT.listeners.delete(this._onStore);
+    clearInterval(this._clock);
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    WT.ensure(hass);
+    this._update();
+  }
+
+  _data() { return wtGet(this._hass, "meds")?.attributes || null; }
+
+  _update() {
+    const st = wtGet(this._hass, "meds");
+    const key = `${st?.last_updated || "-"}|${WT.current()}`;
+    if (key === this._key) return;
+    this._key = key;
+    this._render();
+  }
+
+  async _do(service, data, ok) {
+    this._err = "";
+    try {
+      await wtCall(this._hass, service, data);
+      this._msg = ok || "";
+      if (ok) this._render();
+      return true;
+    } catch (err) {
+      this._err = String(err?.message || err);
+      this._render();
+      return false;
+    }
+  }
+
+  _onClick(e) {
+    const b = e.target.closest("[data-a]");
+    if (!b || b.disabled) return;
+    const a = b.dataset.a;
+    const f = this._form;
+    const d = this._data() || {};
+    switch (a) {
+      case "taken":
+      case "skip":
+        this._do("workout_med_log", { med_id: Number(b.dataset.id), status: a === "taken" ? "taken" : "skipped",
+          due: b.dataset.due || null });
+        break;
+      case "undo": this._do("workout_med_undo", { log_id: Number(b.dataset.log) }); break;
+      case "log-now": {
+        const m = (d.meds || []).find((x) => x.id === Number(b.dataset.id));
+        this._do("workout_med_log", { med_id: Number(b.dataset.id), status: "taken" }, `Logged ${m ? m.name : "it"}.`);
+        break;
+      }
+      case "add": this._form = blankMed(); this._err = ""; this._render(); this._focus("m-name"); break;
+      case "edit": {
+        const m = (d.meds || []).find((x) => x.id === Number(b.dataset.id));
+        if (!m) return;
+        this._form = { med_id: m.id, name: m.name, kind: m.kind, dose: m.dose, note: m.note, echo: m.echo,
+          schedule: { ...m.schedule, days: m.schedule.days.length ? [...m.schedule.days] : [0, 1, 2, 3, 4],
+            times: m.schedule.times.length ? [...m.schedule.times] : ["08:00"] } };
+        this._err = "";
+        this._render();
+        this.shadowRoot.querySelector(".form-card")?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        break;
+      }
+      case "cancel": this._form = null; this._err = ""; this._render(); break;
+      case "save": this._save(); break;
+      case "pause": this._do("workout_med_pause", { med_id: Number(b.dataset.id), paused: b.dataset.on !== "1" }); break;
+      case "delete":
+        if (confirm(`Delete ${b.dataset.name}? Its history is kept.`)) this._do("workout_med_delete", { med_id: Number(b.dataset.id) });
+        break;
+      case "kind": f.kind = b.dataset.v; this._render(); break;
+      case "repeat": f.schedule.repeat = b.dataset.v; this._render(); break;
+      case "day": {
+        const v = Number(b.dataset.v);
+        const days = f.schedule.days;
+        f.schedule.days = days.includes(v) ? days.filter((x) => x !== v) : [...days, v];
+        this._render();
+        break;
+      }
+      case "time-add": {
+        const last = f.schedule.times[f.schedule.times.length - 1] || "08:00";
+        const h = (Number(last.slice(0, 2)) + 12) % 24;
+        f.schedule.times.push(`${String(h).padStart(2, "0")}${last.slice(2)}`);
+        this._render();
+        break;
+      }
+      case "time-del": f.schedule.times.splice(Number(b.dataset.i), 1); this._render(); break;
+      case "end": f.schedule.end = b.dataset.v === "on" ? (f.schedule.end || localISO(30)) : null; this._render(); break;
+      case "echo": f.echo = !f.echo; this._render(); break;
+      case "dismiss": this._msg = ""; this._err = ""; this._render(); break;
+    }
+  }
+
+  _onInput(e) {
+    const t = e.target;
+    const f = this._form;
+    if (!f || !t.id) return;
+    if (t.id === "m-name") f.name = t.value;
+    else if (t.id === "m-dose") f.dose = t.value;
+    else if (t.id === "m-note") f.note = t.value;
+    else if (t.id === "m-every") f.schedule.every = Math.max(1, Math.min(365, Number(t.value) || 1));
+    else if (t.id === "m-start" && t.value) f.schedule.start = t.value;
+    else if (t.id === "m-end" && t.value) f.schedule.end = t.value;
+    else if (t.dataset.time !== undefined) f.schedule.times[Number(t.dataset.time)] = t.value;
+    else return;
+    const p = this.shadowRoot.getElementById("m-preview");
+    if (p) p.textContent = medDescribe(f.schedule);
+  }
+
+  async _save() {
+    const f = this._form;
+    if (!f.name.trim()) { this._err = "Give it a name."; this._render(); this._focus("m-name"); return; }
+    const s = f.schedule;
+    const schedule = { repeat: s.repeat, every: s.every, days: s.days, times: s.times.filter(Boolean),
+      start: s.start, end: s.end };
+    const ok = await this._do("workout_med_save", {
+      ...(f.med_id ? { med_id: f.med_id } : {}), name: f.name.trim(), kind: f.kind, dose: f.dose, note: f.note,
+      echo: f.echo, schedule,
+    }, f.med_id ? `Saved ${f.name.trim()}.` : `Added ${f.name.trim()}.`);
+    if (ok) { this._form = null; this._render(); }
+  }
+
+  _focus(id) { this.shadowRoot.getElementById(id)?.focus(); }
+
+  // --------------------------------------------------------------- render
+  _render() {
+    if (!this._hass) return;
+    const d = this._data();
+    if (!d) {
+      wtBody(this, CSS + MEDS_CSS).innerHTML = `<div class="wc"><div class="card"><p class="hint">${
+        WT.integration(this._hass) ? "Loading\u2026" : "Medication reminders need the Workout Tracker integration."}</p></div></div>`;
+      return;
+    }
+    wtBody(this, CSS + MEDS_CSS).innerHTML = `<div class="wc"><div class="mcols">
+      <div class="card today">${this._today(d)}</div>
+      <div class="mside">
+        ${this._form ? `<div class="card form-card">${this._formHtml()}</div>` : ""}
+        <div class="card">${this._list(d)}</div>
+        ${d.recent.length ? `<div class="card">${this._recent(d)}</div>` : ""}
+      </div>
+    </div></div>`;
+  }
+
+  _flash() {
+    if (!this._msg && !this._err) return "";
+    return `<div class="flash ${this._err ? "err" : ""}" role="status"><span>${esc(this._err || this._msg)}</span>
+      <button class="x" data-a="dismiss" aria-label="Dismiss">\u00D7</button></div>`;
+  }
+
+  _today(d) {
+    const sched = d.today.filter((x) => !x.as_needed);
+    const asNeeded = d.meds.filter((m) => m.schedule.repeat === "none" && !m.paused);
+    const takenAN = d.today.filter((x) => x.as_needed);
+    const rows = sched.map((x) => {
+      const what = `<b>${esc(x.name)}</b>${x.dose ? ` <span>${esc(x.dose)}</span>` : ""}${x.note ? `<small>${esc(x.note)}</small>` : ""}`;
+      let right;
+      if (x.status === "taken") right = `<span class="st ok">\u2713 Taken ${esc(x.at || "")}</span><button class="link quiet" data-a="undo" data-log="${x.log_id}">Undo</button>`;
+      else if (x.status === "skipped") right = `<span class="st">Skipped</span><button class="link quiet" data-a="undo" data-log="${x.log_id}">Undo</button>`;
+      else right = `<button class="btn ${x.status === "due" ? "solid" : ""}" data-a="taken" data-id="${x.med_id}" data-due="${esc(x.due)}">Taken</button>
+        <button class="link quiet" data-a="skip" data-id="${x.med_id}" data-due="${esc(x.due)}">Skip</button>`;
+      return `<li class="dose ${x.status}"><time>${esc(x.time)}</time><div class="what">${what}</div><div class="acts">${right}</div></li>`;
+    }).join("");
+    const pct = d.adherence;
+    const echo = !d.echo ? "No Echo found, so reminders go to your phone only."
+      : `Reminders go to your phone${d.phone ? "" : " (no phone found)"}, and to the Echo${d.echo.via === "say" ? " in the house personality" : ""} when you're home.`;
+    return `<div class="thead"><h2>Today</h2>${pct != null ? `<span class="pill" title="Doses taken of all scheduled doses, last 30 days">${pct}% taken \u00B7 30 days</span>` : ""}</div>
+      ${this._flash()}
+      ${sched.length ? `<ol class="doses">${rows}</ol>` : `<p class="hint">${d.meds.length ? "Nothing scheduled today." : "No medicines yet. Add your first one."}</p>`}
+      ${asNeeded.length ? `<h3>As needed</h3><ul class="an">${asNeeded.map((m) => {
+        const n = takenAN.filter((x) => x.med_id === m.id);
+        return `<li><div class="what"><b>${esc(m.name)}</b>${m.dose ? ` <span>${esc(m.dose)}</span>` : ""}${n.length ? `<small>Today at ${n.map((x) => esc(x.time)).join(", ")}</small>` : ""}</div>
+          <button class="btn" data-a="log-now" data-id="${m.id}">Took one</button></li>`;
+      }).join("")}</ul>` : ""}
+      <p class="foot">${esc(echo)}</p>`;
+  }
+
+  _dots(m) {
+    return `<span class="dots" aria-label="Last 14 days">${m.history.map((h) => {
+      let c = "none";
+      if (h.doses) {
+        if (h.missed) c = "missed";
+        else if (h.taken === h.doses) c = "taken";
+        else if (h.skipped && !h.due && !h.upcoming) c = "skipped";
+        else if (h.taken) c = "part";
+        else c = "open";
+      }
+      return `<i class="${c}" title="${fmtDayLong(h.day)}: ${h.doses ? `${h.taken} of ${h.doses} taken` : "nothing scheduled"}"></i>`;
+    }).join("")}</span>`;
+  }
+
+  _list(d) {
+    const items = d.meds.map((m) => `<li class="${m.paused ? "paused" : ""}">
+      <div class="mhead"><b>${esc(m.name)}</b><span class="tag ${m.kind}">${m.kind === "supplement" ? "Supplement" : "Medication"}</span>
+        ${m.paused ? `<span class="tag">Paused</span>` : ""}
+        ${m.adherence != null ? `<span class="pct">${m.adherence}%</span>` : ""}</div>
+      <p class="sub">${esc([m.dose, m.note].filter(Boolean).join(" \u00B7 "))}</p>
+      <p class="sched">${esc(m.summary)}${m.echo && m.schedule.repeat !== "none" ? "" : m.schedule.repeat !== "none" ? " \u00B7 phone only" : ""}</p>
+      ${m.schedule.repeat !== "none" ? this._dots(m) : ""}
+      <div class="macts">
+        <button class="link" data-a="edit" data-id="${m.id}">Edit</button>
+        <button class="link quiet" data-a="pause" data-id="${m.id}" data-on="${m.paused ? "1" : "0"}">${m.paused ? "Resume" : "Pause"}</button>
+        <button class="link quiet" data-a="delete" data-id="${m.id}" data-name="${esc(m.name)}">Delete</button>
+      </div>
+    </li>`).join("");
+    return `<div class="thead"><h2>Medicines & supplements</h2>
+        ${this._form ? "" : `<button class="btn solid" data-a="add">+ Add</button>`}</div>
+      ${items ? `<ul class="meds">${items}</ul>` : `<p class="hint">Add a medicine or supplement, pick when you take it, and you'll get reminders.</p>`}
+      ${items ? `<p class="legend"><i class="taken"></i>taken <i class="part"></i>partly <i class="missed"></i>missed <i class="skipped"></i>skipped</p>` : ""}`;
+  }
+
+  _formHtml() {
+    const f = this._form;
+    const s = f.schedule;
+    const seg = (act, v, label, on) => `<button class="${on ? "sel" : ""}" data-a="${act}" data-v="${v}" aria-pressed="${on}">${label}</button>`;
+    return `<h2>${f.med_id ? `Edit ${esc(f.name)}` : "Add a medicine or supplement"}</h2>
+      ${this._err ? `<p class="ferr">${esc(this._err)}</p>` : ""}
+      <div class="f2">
+        <label class="span">Name<input id="m-name" value="${esc(f.name)}" placeholder="e.g. Vitamin D" maxlength="60" autocomplete="off"></label>
+        <div class="span"><span class="lbl">Type</span><div class="seg">${seg("kind", "medication", "Medication", f.kind === "medication")}${seg("kind", "supplement", "Supplement", f.kind === "supplement")}</div></div>
+        <label>Dose<input id="m-dose" value="${esc(f.dose)}" placeholder="1 tablet, 500 mg" maxlength="40" autocomplete="off"></label>
+        <label>Note<input id="m-note" value="${esc(f.note)}" placeholder="with food" maxlength="120" autocomplete="off"></label>
+      </div>
+      <div class="rec">
+        <span class="lbl">Repeat</span>
+        <div class="seg">${seg("repeat", "daily", "Daily", s.repeat === "daily")}${seg("repeat", "weekly", "Weekly", s.repeat === "weekly")}${seg("repeat", "none", "As needed", s.repeat === "none")}</div>
+        ${s.repeat === "none" ? `<p class="hint">No reminders. Log a dose from Today when you take one.</p>` : `
+          <div class="every">Every <input id="m-every" type="number" min="1" max="365" inputmode="numeric" value="${s.every}"> ${s.repeat === "daily" ? "day(s)" : "week(s)"}</div>
+          ${s.repeat === "weekly" ? `<div class="wdays" role="group" aria-label="Weekdays">${WD1.map((l, i) => `<button class="${s.days.includes(i) ? "sel" : ""}" data-a="day" data-v="${i}" aria-pressed="${s.days.includes(i)}" title="${WD[i]}">${l}</button>`).join("")}</div>` : ""}
+          <span class="lbl">At</span>
+          <div class="times">${s.times.map((t, i) => `<span class="time"><input type="time" data-time="${i}" value="${esc(t)}" aria-label="Time ${i + 1}">${s.times.length > 1 ? `<button class="x" data-a="time-del" data-i="${i}" aria-label="Remove this time">\u00D7</button>` : ""}</span>`).join("")}
+            <button class="link" data-a="time-add">+ Add a time</button></div>
+          <div class="range">
+            <label>Starts<input id="m-start" type="date" value="${esc(s.start)}"></label>
+            <div><span class="lbl">Ends</span><div class="seg">${seg("end", "never", "Never", !s.end)}${seg("end", "on", "On a date", !!s.end)}</div></div>
+            ${s.end ? `<label>Last day<input id="m-end" type="date" value="${esc(s.end)}" min="${esc(s.start)}"></label>` : ""}
+          </div>
+          <button class="toggle" data-a="echo" aria-pressed="${f.echo}"><span class="sw ${f.echo ? "on" : ""}"></span>Also say it on the Echo when I'm home</button>`}
+      </div>
+      <p class="preview" id="m-preview">${esc(medDescribe(s))}</p>
+      <div class="fbtns"><button class="btn solid" data-a="save">${f.med_id ? "Save" : "Add"}</button><button class="link quiet" data-a="cancel">Cancel</button></div>`;
+  }
+
+  _recent(d) {
+    return `<details class="recent"><summary>Recent doses</summary><ul>${d.recent.map((l) => `<li>
+      <time>${esc(fmtDayLong(l.ts.slice(0, 10)))} ${esc(l.ts.slice(11, 16))}</time><span>${esc(l.name)}</span>
+      <span class="${l.status === "taken" ? "ok" : ""}">${l.status === "taken" ? "taken" : "skipped"}${l.due ? ` (${esc(l.due.slice(11))} dose)` : ""}</span></li>`).join("")}</ul></details>`;
+  }
+}
+
+const MEDS_CSS = `
+.mcols { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
+.mside { display: grid; gap: 16px; min-width: 0; }
+@container (min-width: 880px) { .mcols { grid-template-columns: minmax(320px, 1fr) minmax(360px, 1fr); } }
+.card { padding-bottom: 16px; }
+.thead { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+h2 { margin: 0; font: 600 22px/1.2 var(--display); letter-spacing: -.01em; }
+h3 { margin: 16px 0 6px; font-size: 13px; font-weight: 500; color: var(--muted); }
+.pill { font-size: 13px; padding: 5px 10px; border-radius: 999px; background: rgba(92,200,180,.14); color: var(--presence); white-space: nowrap; }
+.btn { height: 38px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface-2); color: var(--text); font-weight: 600; }
+.btn.solid { background: var(--lamp); border-color: var(--lamp); color: #1b1406; }
+.flash { display: flex; justify-content: space-between; gap: 10px; align-items: center; margin: 0 0 12px; padding: 10px 12px;
+  border-radius: 12px; background: rgba(92,200,180,.14); font-size: 14px; }
+.flash.err { background: rgba(240,96,90,.16); }
+.x { border: 0; background: none; color: var(--muted); font-size: 20px; line-height: 1; padding: 0 4px; }
+.doses { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.dose { display: grid; grid-template-columns: 58px 1fr auto; gap: 12px; align-items: center; padding: 12px 12px 12px 14px;
+  border-radius: var(--r-md); background: var(--surface-2); border-left: 3px solid transparent; }
+.dose time { font: 500 20px/1 var(--display); letter-spacing: -.02em; color: var(--muted); }
+.dose.due { border-left-color: var(--lamp); }
+.dose.due time { color: var(--lamp); }
+.dose.taken { opacity: .85; }
+.dose.taken time { color: var(--presence); }
+.dose.skipped { opacity: .6; }
+.what { min-width: 0; display: flex; flex-direction: column; }
+.what b { font-weight: 600; }
+.what span { color: var(--muted); font-size: 14px; }
+.what b + span { display: inline; }
+.what small { color: var(--muted); font-size: 12px; }
+.acts { display: flex; align-items: center; gap: 10px; }
+.st { font-size: 13px; color: var(--muted); white-space: nowrap; }
+.st.ok { color: var(--presence); font-weight: 600; }
+.an { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.an li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border-radius: var(--r-md); background: var(--surface-2); }
+.foot { margin: 14px 0 0; font-size: 12px; color: var(--faint); }
+.meds { list-style: none; margin: 0; padding: 0; }
+.meds li { padding: 12px 0; }
+.meds li + li { border-top: 1px solid var(--line); }
+.meds li.paused { opacity: .55; }
+.mhead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mhead b { font: 600 18px/1.2 var(--display); }
+.tag { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--surface-2); color: var(--muted); }
+.tag.supplement { color: var(--presence); }
+.tag.medication { color: var(--guest); }
+.pct { margin-left: auto; font: 600 16px/1 var(--display); color: var(--text); }
+.sub { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+.sub:empty { display: none; }
+.sched { margin: 4px 0 8px; font-size: 14px; }
+.dots { display: flex; gap: 4px; }
+.dots i, .legend i { width: 14px; height: 14px; border-radius: 4px; background: var(--surface-2); display: inline-block; }
+.dots i.taken, .legend i.taken { background: var(--presence); }
+.dots i.part, .legend i.part { background: var(--lamp); }
+.dots i.missed, .legend i.missed { background: var(--alert); }
+.dots i.skipped, .legend i.skipped { background: #4a5566; }
+.dots i.open { box-shadow: inset 0 0 0 2px var(--lamp); background: none; }
+.dots i.none { background: transparent; box-shadow: inset 0 0 0 1px var(--line); }
+.legend { margin: 10px 0 0; font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.legend i { width: 10px; height: 10px; margin-left: 6px; }
+.legend i:first-child { margin-left: 0; }
+.macts { display: flex; gap: 16px; margin-top: 6px; }
+.form-card h2 { margin-bottom: 12px; }
+.ferr { margin: 0 0 12px; padding: 8px 12px; border-radius: 10px; background: rgba(240,96,90,.16); font-size: 14px; }
+.f2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.f2 .span { grid-column: 1 / -1; }
+label, .lbl { display: flex; flex-direction: column; gap: 5px; font-size: 13px; color: var(--muted); }
+.lbl { margin: 14px 0 6px; }
+input:not([type=checkbox]) { font: inherit; font-size: 16px; color: var(--text); background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: 10px; padding: 9px 11px; min-width: 0; color-scheme: dark; }
+.seg { display: inline-flex; background: var(--surface-2); border-radius: 999px; padding: 3px; flex-wrap: wrap; }
+.seg button { padding: 7px 14px; border-radius: 999px; font-size: 13px; color: var(--muted); border: 0; background: none; }
+.seg button.sel { background: var(--lamp); color: #1b1406; font-weight: 600; }
+.rec { margin-top: 2px; }
+.every { display: flex; align-items: center; gap: 8px; margin: 12px 0 4px; font-size: 15px; }
+.every input { width: 72px; text-align: center; }
+.wdays { display: flex; gap: 6px; margin: 10px 0 0; }
+.wdays button { width: 38px; height: 38px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface-2); color: var(--muted); font-weight: 600; }
+.wdays button.sel { background: var(--lamp-soft); border-color: var(--lamp); color: var(--text); }
+.times { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.time { display: inline-flex; align-items: center; gap: 2px; }
+.time input { width: 140px; }
+.range { display: flex; flex-wrap: wrap; gap: 0 16px; align-items: flex-end; }
+.range > label { margin-top: 14px; }
+.range .lbl { margin-top: 14px; }
+.toggle { display: flex; align-items: center; gap: 10px; margin: 16px 0 0; border: 0; background: none; color: var(--text); padding: 0; font-size: 14px; }
+.sw { width: 34px; height: 20px; border-radius: 10px; background: var(--surface-2); position: relative; border: 1px solid var(--line); flex: none; }
+.sw::after { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--muted); transition: transform .15s; }
+.sw.on { background: var(--lamp); border-color: var(--lamp); }
+.sw.on::after { transform: translateX(14px); background: #1b1406; }
+.preview { margin: 16px 0 0; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); font-size: 14px; }
+.fbtns { display: flex; align-items: center; gap: 16px; margin-top: 14px; }
+.recent summary { color: var(--muted); cursor: pointer; }
+.recent ul { list-style: none; margin: 8px 0 0; padding: 0; }
+.recent li { display: grid; grid-template-columns: 120px 1fr auto; gap: 8px; padding: 6px 0; font-size: 14px; }
+.recent li + li { border-top: 1px solid var(--line); }
+.recent time { color: var(--muted); }
+.recent .ok { color: var(--presence); }
+@media (max-width: 420px) {
+  .dose { grid-template-columns: 50px 1fr; }
+  .dose .acts { grid-column: 1 / -1; justify-content: flex-end; }
+  .f2 { grid-template-columns: 1fr; }
+}
+`;
+
+if (!customElements.get("workout-meds-card")) customElements.define("workout-meds-card", WorkoutMedsCard);
+if (!window.customCards.some((c) => c.type === "workout-meds-card")) window.customCards.push({
+  type: "workout-meds-card",
+  name: "Medication card",
+  description: "Medication and supplement reminders: today's doses, schedules and history.",
+});
+
+/* ======================================================================
  * workout-tracker-panel: the "Workout" page in the sidebar (integration).
  * Two tabs: Workout (logging) and Overview (charts, calendar, body), on a
  * side rail (bottom bar on phones), in the same look as the home dashboard.
@@ -2490,6 +2905,7 @@ main { padding: 22px 32px 40px; min-width: 0; }
 .who select option { color: #1d1f21; }
 .page.workout { max-width: 1240px; }
 .page.overview { max-width: 1240px; }
+.page.meds { max-width: 1240px; }
 [hidden] { display: none !important; }
 .ver { margin: 28px 0 0; color: var(--faint); font-size: 12px; text-align: center; }
 @media (max-width: 760px) {
@@ -2511,7 +2927,9 @@ class WorkoutTrackerPanel extends HTMLElement {
     this.attachShadow({ mode: "open" });
     let tab = "workout";
     try { tab = localStorage.getItem("workout-tracker-tab") || "workout"; } catch (e) { /* storage blocked */ }
-    this._tab = tab === "overview" ? "overview" : "workout";
+    const fromUrl = new URLSearchParams(location.search).get("tab");   // e.g. a reminder opened /workout?tab=meds
+    if (fromUrl) tab = fromUrl;
+    this._tab = ["overview", "meds"].includes(tab) ? tab : "workout";
   }
 
   set hass(hass) {
@@ -2522,6 +2940,7 @@ class WorkoutTrackerPanel extends HTMLElement {
     this._menu.hass = hass;
     this._workout.hass = hass;
     this._overview.hass = hass;
+    this._meds.hass = hass;
   }
 
   set narrow(narrow) {
@@ -2540,6 +2959,7 @@ class WorkoutTrackerPanel extends HTMLElement {
           <span class="logo" aria-hidden="true"><ha-icon icon="mdi:dumbbell"></ha-icon></span>
           <button role="tab" data-tab="workout"><ha-icon icon="mdi:weight-lifter"></ha-icon><span>Workout</span></button>
           <button role="tab" data-tab="overview"><ha-icon icon="mdi:chart-timeline-variant"></ha-icon><span>Overview</span></button>
+          <button role="tab" data-tab="meds"><ha-icon icon="mdi:pill"></ha-icon><span>Meds</span></button>
         </nav>
         <main>
           <header class="top">
@@ -2550,6 +2970,7 @@ class WorkoutTrackerPanel extends HTMLElement {
           </header>
           <div class="page workout" id="p-workout"></div>
           <div class="page overview" id="p-overview"></div>
+          <div class="page meds" id="p-meds"></div>
           <footer class="ver">Workout Tracker ${WT_VERSION}</footer>
         </main>
       </div>`;
@@ -2562,6 +2983,9 @@ class WorkoutTrackerPanel extends HTMLElement {
     this._overview.setConfig({});
     this.shadowRoot.getElementById("p-workout").appendChild(this._workout);
     this.shadowRoot.getElementById("p-overview").appendChild(this._overview);
+    this._meds = document.createElement("workout-meds-card");
+    this._meds.setConfig({});
+    this.shadowRoot.getElementById("p-meds").appendChild(this._meds);
     this.shadowRoot.querySelector(".tabs").addEventListener("click", (e) => {
       const b = e.target.closest("[data-tab]");
       if (b) this._show(b.dataset.tab);
@@ -2605,7 +3029,8 @@ class WorkoutTrackerPanel extends HTMLElement {
     this.shadowRoot.querySelectorAll("[data-tab]").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
     this.shadowRoot.getElementById("p-workout").hidden = tab !== "workout";
     this.shadowRoot.getElementById("p-overview").hidden = tab !== "overview";
-    this.shadowRoot.getElementById("title").textContent = tab === "overview" ? "Overview" : "Workout";
+    this.shadowRoot.getElementById("p-meds").hidden = tab !== "meds";
+    this.shadowRoot.getElementById("title").textContent = { overview: "Overview", meds: "Medication" }[tab] || "Workout";
     const d = new Date();
     this.shadowRoot.getElementById("date").textContent =
       `${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]}`;

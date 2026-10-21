@@ -42,6 +42,11 @@ Home Assistant.
   a trend line.
 - **Gym arrival and departure** from a zone: a notification with today's plan
   when you arrive, a summary when you leave.
+- **Medication and supplements** (Meds tab): schedules like recurring
+  meetings (daily every N days, weekly on chosen days, one or more times a
+  day, start and end date, or as needed), reminders on your phone with
+  Taken / Skip buttons and on the Echo when you're home, one more reminder
+  after 30 minutes, and history with % taken.
 - **Several people**: everyone with a Home Assistant login gets their own
   tracker, with a name picker for shared tablets.
 - **CSV export** of everything.
@@ -96,6 +101,21 @@ Each person sees their own data when they open **Workout**. To log for
 someone else, pick their name at the top of the page. Every person has
 their own rotation, sets, records, body data and gym time.
 
+## Medication reminders
+
+On the **Meds** tab, add a medicine or supplement with its dose, a note
+(e.g. "with food") and when you take it. At each time you get a phone
+notification with **Taken** and **Skip** buttons; if you're home (your
+person is *home*) the Echo says it too. Still open after 30 minutes? One
+more reminder. Doses nobody marked count as missed at the end of the day.
+
+The Echo uses `script.say` if you have one (a script taking `message`,
+`lines` per personality and `to: echo`); otherwise the first
+`notify.*_announce` entity (Home Assistant's Alexa Devices integration), as
+a normal announcement. Turn the Echo off per medicine in its settings.
+
+Each person has their own medicines, reminders go to their own phone.
+
 ## Using the cards on a dashboard
 
 The page is built from two cards you can also put on any dashboard:
@@ -106,6 +126,10 @@ type: custom:workout-card
 
 ```yaml
 type: custom:workout-overview-card
+```
+
+```yaml
+type: custom:workout-meds-card
 ```
 
 ## Your data
@@ -122,7 +146,8 @@ example `workout_tracker.log_set`, `workout_tracker.log_body` and
 See **Developer tools > Actions** for the full list.
 
 Events for your own automations: `workout_pr` (new record),
-`workout_rest_over`, `workout_gym_arrived` and `workout_gym_left`.
+`workout_rest_over`, `workout_gym_arrived`, `workout_gym_left` and
+`workout_med_reminder`.
 
 ## Credits
 
