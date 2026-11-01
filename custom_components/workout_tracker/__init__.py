@@ -29,7 +29,7 @@ from .tracker import Hub
 _LOGGER = logging.getLogger(__name__)
 
 DOMAIN = "workout_tracker"
-VERSION = "1.4.1"
+VERSION = "1.4.2"
 PANEL_URL = "workout"
 STATIC_URL = "/workout_tracker/static"
 EXPORT_URL = "/workout_tracker/export"
@@ -164,6 +164,7 @@ async def async_setup(hass: HomeAssistant, config) -> bool:
     hass.data.setdefault(DOMAIN, {"listeners": {}, "hub": None})
     websocket_api.async_register_command(hass, ws_subscribe)
     websocket_api.async_register_command(hass, ws_profiles)
+    websocket_api.async_register_command(hass, ws_bundle)
     return True
 
 
@@ -217,6 +218,22 @@ async def ws_subscribe(hass: HomeAssistant, connection, msg) -> None:
     if hub is not None:
         tracker = await hub.get(uid)
         forward(tracker.bundle)
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): "workout_tracker/bundle",
+    vol.Optional("profile"): vol.Any(str, None),
+})
+@websocket_api.async_response
+async def ws_bundle(hass: HomeAssistant, connection, msg) -> None:
+    """One profile's data right now: lets a page catch up if it missed updates."""
+    hub = (hass.data.get(DOMAIN) or {}).get("hub")
+    if hub is None:
+        connection.send_error(msg["id"], "not_ready", "Workout Tracker is starting")
+        return
+    uid = hub.profile(msg.get("profile") or (connection.user.id if connection.user else None))
+    tracker = await hub.get(uid)
+    connection.send_result(msg["id"], {"profile": uid, **tracker.bundle})
 
 
 async def _register_frontend(hass: HomeAssistant) -> None:

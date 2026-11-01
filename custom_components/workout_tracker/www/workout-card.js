@@ -21,7 +21,7 @@ const ACTIONS = {
   start: { cls: "new", verb: (w) => (w ? `Start around ${w} kg` : "Find your weight") },
 };
 const RPES = [6, 7, 7.5, 8, 8.5, 9, 9.5, 10];
-const WT_VERSION = "1.4.1";
+const WT_VERSION = "1.4.2";
 const REST_CHOICES = [0, 60, 90, 120, 180];
 
 const esc = (s) =>
@@ -112,8 +112,25 @@ const WT = {
         this.notify();
       }).catch((err) => console.error("Workout Tracker: profiles failed", err));
     }
+    // Home Assistant replaced its connection (e.g. the app came back after a while): subscribe again.
+    if (this.subscribed && this.conn && hass.connection !== this.conn) {
+      if (this.unsub) { try { this.unsub(); } catch (e) { /* already closed */ } }
+      this.unsub = null;
+      this.subscribed = false;
+    }
+    if (!this.watching) {
+      this.watching = true;
+      // back in the app or the tab: fetch what may have been missed
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") this.refresh();
+      });
+    }
     if (this.subscribed) return;
     this.subscribed = true;
+    this.conn = hass.connection;
+    try {
+      hass.connection.addEventListener("ready", () => this.refresh());   // reconnected after a drop
+    } catch (e) { /* older frontend */ }
     const msg = { type: "workout_tracker/subscribe" };
     if (this.profile) msg.profile = this.profile;
     // A switch of profile can happen before the old subscription is confirmed;
@@ -121,6 +138,7 @@ const WT = {
     const gen = this.gen = (this.gen || 0) + 1;
     hass.connection.subscribeMessage((bundle) => {
       if (gen !== this.gen) return;
+      this.seq = (this.seq || 0) + 1;
       this.bundle = bundle;
       this.notify();
     }, msg).then((unsub) => {
@@ -131,6 +149,20 @@ const WT = {
       this.subscribed = false;
       console.error("Workout Tracker: subscribe failed", err);
     });
+  },
+  /** Fetch the current data directly (if a live update went missing). */
+  refresh() {
+    const hass = this.hass;
+    if (!hass || !this.integration(hass)) return Promise.resolve();
+    const gen = this.gen;
+    const msg = { type: "workout_tracker/bundle" };
+    if (this.profile) msg.profile = this.profile;
+    return hass.callWS(msg).then((bundle) => {
+      if (gen !== this.gen) return;
+      this.seq = (this.seq || 0) + 1;
+      this.bundle = bundle;
+      this.notify();
+    }).catch(() => { /* older server or not ready: the subscription still works */ });
   },
   /** Whose data is shown. */
   current() {
@@ -162,7 +194,11 @@ const INT_SERVICE = { workout_select: "select_exercise" };
 function wtCall(hass, service, data = {}) {
   if (WT.integration(hass)) {
     const d = WT.profile ? { ...data, profile: WT.profile } : data;
-    return hass.callService("workout_tracker", INT_SERVICE[service] || service.replace(/^workout_/, ""), d);
+    const before = WT.seq || 0;
+    // If no live update arrives shortly after the change, fetch the data ourselves.
+    const check = () => setTimeout(() => { if ((WT.seq || 0) === before) WT.refresh(); }, 800);
+    return hass.callService("workout_tracker", INT_SERVICE[service] || service.replace(/^workout_/, ""), d)
+      .then((r) => { check(); return r; });
   }
   return hass.callService("pyscript", service, data);
 }
