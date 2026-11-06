@@ -21,7 +21,7 @@ const ACTIONS = {
   start: { cls: "new", verb: (w) => (w ? `Start around ${w} kg` : "Find your weight") },
 };
 const RPES = [6, 7, 7.5, 8, 8.5, 9, 9.5, 10];
-const WT_VERSION = "1.5.0";
+const WT_VERSION = "1.5.1";
 const REST_CHOICES = [0, 60, 90, 120, 180];
 
 const esc = (s) =>
@@ -1716,11 +1716,8 @@ class WorkoutOverviewCard extends HTMLElement {
       const root = this.shadowRoot;
       const val = (id) => root.getElementById(id)?.value ?? "";
       const goal = Number(val("act-goal"));
-      const age = val("act-age") === "" ? null : Number(val("act-age"));
       if (!goal || goal < 500) { this._actMsg = "Step goal must be at least 500."; this._render(); return; }
-      if (age !== null && (isNaN(age) || age < 10 || age > 110)) { this._actMsg = "Enter your age in years."; this._render(); return; }
-      const data = { goal, sex: val("act-sex"), nudge: root.getElementById("act-nudge-on")?.checked ? (val("act-nudge") || "17:00") : "" };
-      if (age !== null) data.age = age;
+      const data = { goal, nudge: root.getElementById("act-nudge-on")?.checked ? (val("act-nudge") || "17:00") : "" };
       wtCall(this._hass, "workout_activity_settings", data)
         .then(() => { this._actMsg = "Saved"; this._render(); setTimeout(() => { this._actMsg = ""; this._render(); }, 2000); })
         .catch((err) => { this._actMsg = `Couldn't save: ${err.message || err}`; this._render(); });
@@ -1832,8 +1829,7 @@ class WorkoutOverviewCard extends HTMLElement {
     const k = a.kcal || {};
     const pct = Math.min(100, a.percent || 0);
     const noSteps = !(a.sources?.steps || []).length;
-    const missingBody = (a.missing || []).filter((m) => m === "weight" || m === "height");
-    const missingSet = (a.missing || []).filter((m) => m === "age" || m === "sex");
+    const noWeight = (a.missing || []).includes("weight");
 
     // ---- today
     const left = Math.max(0, a.goal - a.steps);
@@ -1846,15 +1842,14 @@ class WorkoutOverviewCard extends HTMLElement {
       </div>`;
     const gymWhy = a.gym_basis === "visit" ? `${a.gym_minutes} min at the gym` : a.gym_basis === "sets" ? `${a.gym_minutes} min, from the sets you logged` : "no gym today";
     const parts = [
-      ["Resting", k.resting, `your resting burn so far today (${n(k.resting_full_day)} kcal for the whole day)`],
       ["Walking", k.walking, `${n(a.steps)} steps`],
       ["Gym", k.gym, gymWhy],
     ];
     const kcalTile = `<div class="atile">
-        <span class="alab">Calories burned so far</span>
+        <span class="alab">Active calories today</span>
         <p class="abig"><b>${k.total == null ? "\u2013" : `\u2248 ${n(k.total)}`}</b><span>kcal</span></p>
         <ul class="akcal">${parts.map(([l, v, tip]) => `<li data-tip="${esc(`<b>${l}</b><br>${tip}`)}"><span>${l}</span><b>${n(v)}</b></li>`).join("")}</ul>
-        ${a.watch_kcal != null ? `<small>Watch measured ${n(a.watch_kcal)} kcal active (walking + gym estimate: ${n((k.walking || 0) + (k.gym || 0))})</small>` : `<small>An estimate from your weight, steps and gym time.</small>`}
+        ${a.watch_kcal != null ? `<small>Watch measured ${n(a.watch_kcal)} kcal active today</small>` : `<small>What you burned by moving, estimated from your weight, steps and gym time. Your resting burn isn't included.</small>`}
       </div>`;
 
     // ---- two weeks of steps
@@ -1893,18 +1888,13 @@ class WorkoutOverviewCard extends HTMLElement {
     // ---- what's missing
     const hints = [];
     if (noSteps) hints.push("No step counter found. Install the Home Assistant app on your phone, link your phone to your person (Settings \u2192 People), and turn on its Steps sensor.");
-    if (missingBody.length) hints.push(`Add your ${missingBody.join(" and ")} in Body below for the calorie estimate. ${missingBody.map((m) => `<button class="link quiet" data-act="act-body" data-metric="${m}">Add ${m}</button>`).join(" ")}`);
-    if (missingSet.length) hints.push(`Set your ${missingSet.join(" and ")} in Settings below for the resting calories.`);
+    if (noWeight) hints.push(`Add your body weight in Body below for the calorie estimate. <button class="link quiet" data-act="act-body" data-metric="weight">Add weight</button>`);
 
     // ---- settings
-    const sexOpts = [["", "Choose\u2026"], ["male", "Male"], ["female", "Female"]]
-      .map(([v, l]) => `<option value="${v}" ${(s.sex || "") === v ? "selected" : ""}>${l}</option>`).join("");
-    const settingsOpen = missingSet.length || this._actMsg ? "open" : "";
+    const settingsOpen = this._actMsg ? "open" : "";
     const settings = `<details class="numbers aset" ${settingsOpen}><summary>Settings</summary>
         <div class="bform agrid">
           <label>Step goal<input id="act-goal" inputmode="numeric" value="${s.goal}"></label>
-          <label>Age<input id="act-age" inputmode="numeric" value="${s.age ?? ""}" placeholder="years"></label>
-          <label>Sex<select id="act-sex">${sexOpts}</select></label>
           <label class="anudge">Reminder at<span class="unit"><input type="checkbox" id="act-nudge-on" ${s.nudge ? "checked" : ""} aria-label="Step reminder on">
             <input id="act-nudge" type="time" value="${s.nudge || "17:00"}" aria-label="Reminder time"></span></label>
           <button class="add-btn" data-act="act-save">Save</button>
@@ -2584,7 +2574,7 @@ path.past { opacity: .85; }
 .agoal { height: 10px; border-radius: 5px; }
 .agoal i { background: var(--wc-fill); }
 .agoal i.met { background: var(--plate-green); }
-.akcal { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.akcal { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; max-width: 320px; }
 .akcal li { display: flex; flex-direction: column; gap: 2px; }
 .akcal span { font-size: 12px; color: var(--wc-mute); }
 .akcal b { font: 600 17px/1 var(--wc-num); }
@@ -2592,7 +2582,7 @@ path.past { opacity: .85; }
 .sbar.met { fill: var(--plate-green); opacity: .85; }
 .sbar.now { opacity: 1; }
 .goalline { stroke: var(--wc-mute); stroke-width: 1; stroke-dasharray: 4 4; }
-.agrid { grid-template-columns: repeat(4, minmax(0, 1fr)) auto; }
+.agrid { grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) auto; max-width: 560px; }
 .anudge .unit { gap: 8px; }
 .anudge input[type=checkbox] { width: 20px; height: 20px; flex: none; padding: 0; }
 .aset code { font-size: 12px; }

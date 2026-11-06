@@ -74,24 +74,12 @@ def run(coro):
 
 
 class EstimateTest(unittest.TestCase):
-    def test_resting_formula(self):
-        # Mifflin-St Jeor: 10*94 + 6.25*180 - 5*27 + 5
-        self.assertEqual(act.resting_per_day(94, 180, 27, "male"), 1935)
-        self.assertEqual(act.resting_per_day(60, 165, 30, "female"), 600 + 1031.25 - 150 - 161)
-        self.assertIsNone(act.resting_per_day(94, 180, None, "male"))
+    def test_estimate_is_active_only(self):
+        e = act.estimate(94, 8000, 60)
+        self.assertEqual(e, {"total": 376 + 329, "walking": 376, "gym": 329})
 
-    def test_estimate_parts(self):
-        e = act.estimate(94, 180, 27, "male", 8000, 60, 0.5)
-        self.assertEqual(e["resting"], 968)
-        self.assertEqual(e["walking"], 376)
-        self.assertEqual(e["gym"], 329)
-        self.assertEqual(e["total"], 968 + 376 + 329)
-        self.assertEqual(e["resting_full_day"], 1935)
-
-    def test_estimate_without_age_keeps_walking(self):
-        e = act.estimate(94, 180, None, None, 1000, 0, 0.5)
-        self.assertIsNone(e["total"])
-        self.assertEqual(e["walking"], 47)
+    def test_estimate_needs_weight(self):
+        self.assertEqual(act.estimate(None, 1000, 30), {"total": None, "walking": None, "gym": None})
 
     def test_settings_cleaned(self):
         s = act.clean_settings({"goal": "7500", "age": "27", "sex": "Male", "nudge": "5:00", "steps": ""})
@@ -149,18 +137,16 @@ class TrackerActivityTest(unittest.TestCase):
         run(self.t.activity_tick())
         self.assertEqual(self.a()["steps"], 5100)
 
-    def test_calories_need_body_and_settings(self):
+    def test_calories_need_only_weight(self):
         self.host.put("sensor.alex_phone_steps", 2000)
         run(self.t.activity_tick())
-        self.assertEqual(set(self.a()["missing"]), {"weight", "height", "age", "sex"})
+        self.assertEqual(self.a()["missing"], ["weight"])
+        self.assertIsNone(self.a()["kcal"]["total"])
         run(self.t.log_body("weight", 94))
-        run(self.t.log_body("height", 180))
-        run(self.t.activity_settings(goal=8000, age=27, sex="male"))
         a = self.a()
         self.assertEqual(a["missing"], [])
-        self.assertEqual(a["kcal"]["walking"], 94)
-        self.assertIsNotNone(a["kcal"]["total"])
-        self.assertEqual(a["history"]["days"][-1]["steps"], 2000)
+        self.assertEqual(a["kcal"], {"total": 94, "walking": 94, "gym": 0})
+        self.assertEqual(a["history"]["days"][-1]["kcal"], 94)
 
     def test_nudge_once_when_below_goal(self):
         self.host.put("sensor.alex_phone_steps", 3000)

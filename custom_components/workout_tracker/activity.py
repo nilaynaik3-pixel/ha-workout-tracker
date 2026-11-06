@@ -2,12 +2,10 @@
 
 Works without a watch. Steps come from the Home Assistant phone app (the
 phone's own step count and, where available, Apple Health / Health Connect,
-which also merge a watch); the higher of the two counts. Calories are
-estimated for today so far:
+which also merge a watch); the higher of the two counts. Active calories
+(only what you burned by moving, not your resting burn) are estimated for
+today so far, from your latest body weight in the Body section:
 
-  resting  Mifflin-St Jeor resting burn for a whole day, counted up through
-           the day (needs body weight and height from the Body section, and
-           age and sex from the activity settings)
   walking  steps x body weight x 0.0005 kcal
   gym      minutes at the gym x body weight x 3.5 kcal per kg per hour on
            top of resting (strength training at a moderate effort). Minutes
@@ -42,6 +40,7 @@ CREATE TABLE IF NOT EXISTS activity (
 );
 """
 
+# age and sex are kept for older saved settings; the estimate no longer uses them
 DEFAULTS = {"goal": 8000, "age": None, "sex": None, "nudge": "17:00", "steps": "auto", "energy": "auto"}
 KCAL_PER_STEP_PER_KG = 0.0005
 GYM_KCAL_PER_KG_HOUR = 3.5          # MET ~4.5 for strength training, minus the resting 1 MET
@@ -99,22 +98,14 @@ def clean_settings(raw):
 # Calories
 # --------------------------------------------------------------------------
 
-def resting_per_day(weight, height, age, sex):
-    """Mifflin-St Jeor resting energy for a whole day, in kcal (None if anything is missing)."""
-    if not weight or not height or not age or sex not in ("male", "female"):
-        return None
-    return 10 * weight + 6.25 * height - 5 * age + (5 if sex == "male" else -161)
-
-
-def estimate(weight, height, age, sex, steps, gym_minutes, day_fraction):
-    """Calories burned so far today. Parts that can't be worked out are None."""
-    rest_day = resting_per_day(weight, height, age, sex)
-    resting = round(rest_day * max(0.0, min(day_fraction, 1.0))) if rest_day else None
-    walking = round(steps * weight * KCAL_PER_STEP_PER_KG) if weight else None
-    gym = round(GYM_KCAL_PER_KG_HOUR * weight * gym_minutes / 60) if weight else None
-    total = resting + walking + gym if None not in (resting, walking, gym) else None
-    return {"total": total, "resting": resting, "walking": walking, "gym": gym,
-            "resting_full_day": round(rest_day) if rest_day else None}
+def estimate(weight, steps, gym_minutes):
+    """Active calories so far today: walking plus gym, nothing for resting.
+    Everything is None without a body weight."""
+    if not weight:
+        return {"total": None, "walking": None, "gym": None}
+    walking = round(steps * weight * KCAL_PER_STEP_PER_KG)
+    gym = round(GYM_KCAL_PER_KG_HOUR * weight * gym_minutes / 60)
+    return {"total": walking + gym, "walking": walking, "gym": gym}
 
 
 def gym_minutes_on(db_path, day, now=None):
@@ -167,11 +158,11 @@ def save_day(db_path, day, steps, est, watch_kcal, goal, now=None):
     with con:
         con.execute(
             "INSERT INTO activity(day, steps, kcal, resting, walking, gym, watch_kcal, goal, updated) "
-            "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(day) DO UPDATE SET "
-            "steps = excluded.steps, kcal = excluded.kcal, resting = excluded.resting, "
+            "VALUES(?, ?, ?, NULL, ?, ?, ?, ?, ?) ON CONFLICT(day) DO UPDATE SET "
+            "steps = excluded.steps, kcal = excluded.kcal, resting = NULL, "
             "walking = excluded.walking, gym = excluded.gym, watch_kcal = excluded.watch_kcal, "
             "goal = excluded.goal, updated = excluded.updated",
-            (day, int(steps), est.get("total"), est.get("resting"), est.get("walking"), est.get("gym"),
+            (day, int(steps), est.get("total"), est.get("walking"), est.get("gym"),
              watch_kcal, int(goal), (now or datetime.now()).isoformat(timespec="seconds")))
     con.close()
 
@@ -265,11 +256,8 @@ class ActivityMixin:
         watch = int(round(max(energy_vals))) if energy_vals else None
         body = await self.run(latest_body, self.db)
         gym_min, gym_basis = await self.run(gym_minutes_on, self.db, day, now)
-        midnight = datetime.combine(today, datetime.min.time())
-        fraction = (now - midnight).total_seconds() / 86400
-        est = estimate(body["weight"], body["height"], s["age"], s["sex"], steps, gym_min, fraction)
-        missing = [k for k, v in (("weight", body["weight"]), ("height", body["height"]),
-                                  ("age", s["age"]), ("sex", s["sex"])) if not v]
+        est = estimate(body["weight"], steps, gym_min)
+        missing = [] if body["weight"] else ["weight"]
         today_vals = (day, steps, est["total"], watch, gym_min, s["goal"])
         if self.activity != today_vals:
             self.activity = today_vals
@@ -286,7 +274,6 @@ class ActivityMixin:
             "gym_minutes": gym_min,
             "gym_basis": gym_basis,
             "weight": body["weight"],
-            "height": body["height"],
             "missing": missing,
             "settings": s,
             "sources": src,

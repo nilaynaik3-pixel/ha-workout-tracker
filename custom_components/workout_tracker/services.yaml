@@ -442,7 +442,7 @@ med_undo:
           mode: box
 activity_settings:
   name: Activity settings
-  description: Step goal, the details used for the calorie estimate, and the daily step reminder. Fields you leave out keep their value.
+  description: Step goal and the daily step reminder. Fields you leave out keep their value.
   fields:
     goal:
       name: Step goal
@@ -452,19 +452,6 @@ activity_settings:
           max: 100000
           step: 500
           mode: box
-    age:
-      name: Age
-      selector:
-        number:
-          min: 10
-          max: 110
-          mode: box
-    sex:
-      name: Sex
-      description: Used for the resting calorie formula.
-      selector:
-        select:
-          options: [male, female]
     nudge:
       name: Step reminder time
       description: 'HH:MM, or empty for no reminder. Sent only when you are below your goal.'

@@ -42,7 +42,7 @@ Home Assistant.
   a trend line.
 - **Steps and calories, no watch needed** (Overview tab): today's steps from
   your phone's Home Assistant app against a step goal, an estimate of the
-  calories you burned (resting, walking and gym), two weeks of history, and a
+  active calories you burned (walking and gym), two weeks of history, and a
   phone reminder at a time you choose (17:00 by default) when you're below
   your goal. Also as sensors for your own dashboards.
 - **Gym arrival and departure** from a zone: a notification with today's plan
@@ -110,10 +110,9 @@ if you use the Home Assistant phone app:
   person (the phone's own count and, on iPhone, Apple Health, which also
   includes your Apple Watch). The higher of the two counts. Turn the sensors
   on in the app under **Settings > Companion app > Sensors**.
-- **Calories** are an estimate of what you burned today so far:
-  - *resting*: the Mifflin-St Jeor formula from your weight and height
-    (Body section) and your age and sex (Activity > Settings), counted up
-    through the day;
+- **Active calories** are an estimate of what you burned by moving today
+  (your resting burn isn't included), from your latest body weight in the
+  Body section:
   - *walking*: steps x body weight x 0.0005 kcal;
   - *gym*: your time at the gym (from the gym zone, or worked out from the
     sets you logged) x body weight x 3.5 kcal an hour, for strength training.
@@ -126,8 +125,9 @@ if you use the Home Assistant phone app:
 
 Sensors for dashboards and automations (owner's profile):
 `sensor.workout_tracker_steps_today` and
-`sensor.workout_tracker_calories_burned_today` (attributes: resting,
-walking, gym, goal, 7-day averages).
+`sensor.workout_tracker_active_calories_today` (attributes: walking, gym,
+7-day averages). Installs that had 1.5.0 keep the entity id
+`sensor.workout_tracker_calories_burned_today`.
 
 Different step sensors? Use the `workout_tracker.activity_settings` action
 with `steps: sensor.a, sensor.b`.

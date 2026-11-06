@@ -86,7 +86,8 @@ class StepsSensor(_Base):
 
 
 class CaloriesSensor(_Base):
-    _attr_name = "Calories burned today"
+    """Active calories only (walking + gym), not the resting burn."""
+    _attr_name = "Active calories today"
     _attr_icon = "mdi:fire"
     _attr_native_unit_of_measurement = "kcal"
 
@@ -102,8 +103,7 @@ class CaloriesSensor(_Base):
         if not self._a:
             return None
         k = self._a.get("kcal") or {}
-        return {"resting": k.get("resting"), "walking": k.get("walking"), "gym": k.get("gym"),
-                "resting_full_day": k.get("resting_full_day"),
+        return {"walking": k.get("walking"), "gym": k.get("gym"),
                 "gym_minutes": self._a.get("gym_minutes"), "gym_based_on": self._a.get("gym_basis"),
                 "watch_active": self._a.get("watch_kcal"),
                 "average_7_days": (self._a.get("history") or {}).get("avg_kcal_7d"),
