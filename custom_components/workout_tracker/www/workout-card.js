@@ -21,7 +21,7 @@ const ACTIONS = {
   start: { cls: "new", verb: (w) => (w ? `Start around ${w} kg` : "Find your weight") },
 };
 const RPES = [6, 7, 7.5, 8, 8.5, 9, 9.5, 10];
-const WT_VERSION = "1.4.2";
+const WT_VERSION = "1.5.0";
 const REST_CHOICES = [0, 60, 90, 120, 180];
 
 const esc = (s) =>
@@ -1501,8 +1501,21 @@ class WorkoutOverviewCard extends HTMLElement {
     const st = wtGet(hass, "stats");
     const dd = wtGet(hass, "day");
     const ex = wtGet(hass, "export");
-    const key = (st?.last_updated || "-") + (ex?.last_updated || "-") + (this.hasAttribute("data-dark") ? "d" : "l");
+    const ac = wtGet(hass, "activity");
+    const key = (st?.last_updated || "-") + (ex?.last_updated || "-") + (ac?.last_updated || "-") + (this.hasAttribute("data-dark") ? "d" : "l");
     const dkey = dd?.last_updated || "-";
+    // Someone is typing in a field: redraw when they leave it, not under their fingers.
+    const typing = this.shadowRoot.activeElement?.matches?.("input, select, textarea");
+    if (key !== this._key && typing) {
+      if (!this._waitBlur) {
+        this._waitBlur = true;
+        this.shadowRoot.addEventListener("focusout", () => {
+          this._waitBlur = false;
+          setTimeout(() => this._update(), 0);
+        }, { once: true });
+      }
+      return;
+    }
     if (key !== this._key) {
       this._key = key;
       this._dkey = dkey;
@@ -1560,6 +1573,7 @@ class WorkoutOverviewCard extends HTMLElement {
       <div class="wc ov ${wide ? "wide" : ""}">
         ${this._week(a)}
         <div class="grid">
+          ${this._activity(W)}
           ${this._progress(a, W)}
           ${this._weekly(a, colW)}
           ${this._calendar(a, colW)}
@@ -1698,6 +1712,23 @@ class WorkoutOverviewCard extends HTMLElement {
         b.dataset.armed = "1"; b.textContent = "Remove?"; b.classList.add("armed");
         setTimeout(() => { if (b.isConnected) { delete b.dataset.armed; b.textContent = "\u2715"; b.classList.remove("armed"); } }, 3000);
       }
+    } else if (act === "act-save") {
+      const root = this.shadowRoot;
+      const val = (id) => root.getElementById(id)?.value ?? "";
+      const goal = Number(val("act-goal"));
+      const age = val("act-age") === "" ? null : Number(val("act-age"));
+      if (!goal || goal < 500) { this._actMsg = "Step goal must be at least 500."; this._render(); return; }
+      if (age !== null && (isNaN(age) || age < 10 || age > 110)) { this._actMsg = "Enter your age in years."; this._render(); return; }
+      const data = { goal, sex: val("act-sex"), nudge: root.getElementById("act-nudge-on")?.checked ? (val("act-nudge") || "17:00") : "" };
+      if (age !== null) data.age = age;
+      wtCall(this._hass, "workout_activity_settings", data)
+        .then(() => { this._actMsg = "Saved"; this._render(); setTimeout(() => { this._actMsg = ""; this._render(); }, 2000); })
+        .catch((err) => { this._actMsg = `Couldn't save: ${err.message || err}`; this._render(); });
+    } else if (act === "act-body") {
+      this._bodyMetric = b.dataset.metric;
+      this._render();
+      const f = this.shadowRoot.getElementById("b-value");
+      if (f) { f.scrollIntoView({ block: "center", behavior: "smooth" }); f.focus({ preventScroll: true }); }
     } else if (act === "export") {
       this._exporting = true;
       this._render();
@@ -1789,6 +1820,108 @@ class WorkoutOverviewCard extends HTMLElement {
       <label class="addex"><span>Add an exercise</span>
         <select id="add-ex"><option value="">Choose\u2026</option>${catalog}</select></label>
     </div>`;
+  }
+
+  // Steps and calories ---------------------------------------------------
+  _activity(W) {
+    const part = wtGet(this._hass, "activity");
+    const a = part?.attributes;
+    if (!a || !a.settings) return "";
+    const n = (x) => (x == null ? "\u2013" : Number(x).toLocaleString());
+    const s = a.settings;
+    const k = a.kcal || {};
+    const pct = Math.min(100, a.percent || 0);
+    const noSteps = !(a.sources?.steps || []).length;
+    const missingBody = (a.missing || []).filter((m) => m === "weight" || m === "height");
+    const missingSet = (a.missing || []).filter((m) => m === "age" || m === "sex");
+
+    // ---- today
+    const left = Math.max(0, a.goal - a.steps);
+    const stepsTile = `<div class="atile">
+        <span class="alab">Steps today</span>
+        <p class="abig"><b>${n(a.steps)}</b><span>of ${n(a.goal)}</span></p>
+        <div class="track agoal" role="progressbar" aria-valuemin="0" aria-valuemax="${a.goal}" aria-valuenow="${a.steps}"
+          aria-label="Steps toward today's goal"><i style="width:${pct}%" class="${a.steps >= a.goal ? "met" : ""}"></i></div>
+        <small>${a.steps >= a.goal ? "Goal reached" : `${n(left)} to go`}</small>
+      </div>`;
+    const gymWhy = a.gym_basis === "visit" ? `${a.gym_minutes} min at the gym` : a.gym_basis === "sets" ? `${a.gym_minutes} min, from the sets you logged` : "no gym today";
+    const parts = [
+      ["Resting", k.resting, `your resting burn so far today (${n(k.resting_full_day)} kcal for the whole day)`],
+      ["Walking", k.walking, `${n(a.steps)} steps`],
+      ["Gym", k.gym, gymWhy],
+    ];
+    const kcalTile = `<div class="atile">
+        <span class="alab">Calories burned so far</span>
+        <p class="abig"><b>${k.total == null ? "\u2013" : `\u2248 ${n(k.total)}`}</b><span>kcal</span></p>
+        <ul class="akcal">${parts.map(([l, v, tip]) => `<li data-tip="${esc(`<b>${l}</b><br>${tip}`)}"><span>${l}</span><b>${n(v)}</b></li>`).join("")}</ul>
+        ${a.watch_kcal != null ? `<small>Watch measured ${n(a.watch_kcal)} kcal active (walking + gym estimate: ${n((k.walking || 0) + (k.gym || 0))})</small>` : `<small>An estimate from your weight, steps and gym time.</small>`}
+      </div>`;
+
+    // ---- two weeks of steps
+    const days = a.history?.days || [];
+    let chart = "";
+    if (days.some((d) => d.steps)) {
+      const H = 130, padL = 38, padB = 22, padT = 12;
+      const goalMax = Math.max(...days.map((d) => d.goal || a.goal), a.goal);
+      const maxV = Math.max(goalMax, ...days.map((d) => d.steps || 0));
+      const ticks = niceTicks(0, maxV, 3);
+      const top = ticks[ticks.length - 1];
+      const bw = (W - padL) / days.length;
+      const barW = Math.max(6, Math.min(26, bw - 6));
+      const y = (v) => padT + (H - padT - padB) * (1 - v / top);
+      const bars = days.map((d, i) => {
+        const cx = padL + bw * i + bw / 2;
+        const v = d.steps || 0;
+        const h = Math.max(0, y(0) - y(v));
+        const r = Math.min(4, barW / 2, h);
+        const met = d.goal && v >= d.goal;
+        const isToday = i === days.length - 1;
+        const tip = `<b>${isToday ? "Today" : fmtDayLong(d.day)}</b><br>${d.steps == null ? "No data" : `${n(v)} steps`}${d.kcal != null ? `<br>\u2248 ${n(d.kcal)} kcal${isToday ? " so far" : ""}` : ""}${d.watch_kcal != null ? `<br><span class="mute">watch: ${n(d.watch_kcal)} kcal active</span>` : ""}`;
+        const bar = v ? `<path d="M${cx - barW / 2},${y(0)} V${y(v) + r} q0,-${r} ${r},-${r} H${cx + barW / 2 - r} q${r},0 ${r},${r} V${y(0)} Z" class="sbar ${met ? "met" : ""} ${isToday ? "now" : ""}"/>` : "";
+        return `<g data-tip="${esc(tip)}"><rect x="${cx - bw / 2}" y="${padT}" width="${bw}" height="${H - padT - padB}" fill="transparent"/>${bar}</g>`;
+      }).join("");
+      const grid = ticks.map((t) => `<line x1="${padL}" x2="${W}" y1="${y(t)}" y2="${y(t)}" class="gl"/><text x="${padL - 6}" y="${y(t) + 4}" class="ax" text-anchor="end">${t >= 1000 ? `${num(t / 1000)}k` : t}</text>`).join("");
+      const goalLine = `<line x1="${padL}" x2="${W}" y1="${y(a.goal)}" y2="${y(a.goal)}" class="goalline"/><text x="${W}" y="${y(a.goal) - 5}" class="ax" text-anchor="end">goal</text>`;
+      const xl = `<text x="${padL + bw / 2}" y="${H - 5}" class="ax" text-anchor="start">${fmtDay(days[0].day)}</text><text x="${W}" y="${H - 5}" class="ax" text-anchor="end">Today</text>`;
+      chart = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Steps per day, last two weeks">${grid}${goalLine}${bars}${xl}</svg>`;
+    }
+    const h = a.history || {};
+    const summary = h.days_counted_7d
+      ? `Last 7 days: ${n(h.avg_steps_7d)} steps a day on average, goal reached on ${h.goal_days_7d} of ${h.days_counted_7d} day${h.days_counted_7d === 1 ? "" : "s"}${h.avg_kcal_7d != null ? `, \u2248 ${n(h.avg_kcal_7d)} kcal a day` : ""}.`
+      : "Your daily history builds up from today.";
+
+    // ---- what's missing
+    const hints = [];
+    if (noSteps) hints.push("No step counter found. Install the Home Assistant app on your phone, link your phone to your person (Settings \u2192 People), and turn on its Steps sensor.");
+    if (missingBody.length) hints.push(`Add your ${missingBody.join(" and ")} in Body below for the calorie estimate. ${missingBody.map((m) => `<button class="link quiet" data-act="act-body" data-metric="${m}">Add ${m}</button>`).join(" ")}`);
+    if (missingSet.length) hints.push(`Set your ${missingSet.join(" and ")} in Settings below for the resting calories.`);
+
+    // ---- settings
+    const sexOpts = [["", "Choose\u2026"], ["male", "Male"], ["female", "Female"]]
+      .map(([v, l]) => `<option value="${v}" ${(s.sex || "") === v ? "selected" : ""}>${l}</option>`).join("");
+    const settingsOpen = missingSet.length || this._actMsg ? "open" : "";
+    const settings = `<details class="numbers aset" ${settingsOpen}><summary>Settings</summary>
+        <div class="bform agrid">
+          <label>Step goal<input id="act-goal" inputmode="numeric" value="${s.goal}"></label>
+          <label>Age<input id="act-age" inputmode="numeric" value="${s.age ?? ""}" placeholder="years"></label>
+          <label>Sex<select id="act-sex">${sexOpts}</select></label>
+          <label class="anudge">Reminder at<span class="unit"><input type="checkbox" id="act-nudge-on" ${s.nudge ? "checked" : ""} aria-label="Step reminder on">
+            <input id="act-nudge" type="time" value="${s.nudge || "17:00"}" aria-label="Reminder time"></span></label>
+          <button class="add-btn" data-act="act-save">Save</button>
+        </div>
+        <p class="sub">${a.phone ? "The reminder goes to your phone when you're below your goal at that time." : "No phone found for reminders: set Notifications in the integration's settings."}
+          Steps from ${(a.sources?.steps || []).map((e) => `<code>${esc(e)}</code>`).join(", ") || "nothing yet"}.</p>
+        ${this._actMsg ? `<p class="hint">${esc(this._actMsg)}</p>` : ""}
+      </details>`;
+
+    return `<section class="panel span act">
+      <h2>Activity</h2>
+      <div class="atiles">${stepsTile}${kcalTile}</div>
+      ${hints.map((t) => `<p class="warn">${t}</p>`).join("")}
+      ${chart}
+      <p class="sub">${esc(summary)}</p>
+      ${settings}
+    </section>`;
   }
 
   // Time in the gym ----------------------------------------------------
@@ -2440,6 +2573,32 @@ path.past { opacity: .85; }
 .tip .sw { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
 [data-tip] { cursor: default; }
 
+.atiles { display: grid; grid-template-columns: 1fr; gap: 14px; margin: 10px 0 12px; }
+.ov.wide .atiles { grid-template-columns: 1fr 1fr; }
+.atile { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.alab { font-size: 13px; color: var(--wc-mute); }
+.abig { margin: 0; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.abig b { font: 600 34px/1 var(--wc-num); }
+.abig span { color: var(--wc-mute); font-size: 14px; }
+.atile small { font-size: 12px; color: var(--wc-mute); }
+.agoal { height: 10px; border-radius: 5px; }
+.agoal i { background: var(--wc-fill); }
+.agoal i.met { background: var(--plate-green); }
+.akcal { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.akcal li { display: flex; flex-direction: column; gap: 2px; }
+.akcal span { font-size: 12px; color: var(--wc-mute); }
+.akcal b { font: 600 17px/1 var(--wc-num); }
+.sbar { fill: var(--wc-fill); opacity: .55; }
+.sbar.met { fill: var(--plate-green); opacity: .85; }
+.sbar.now { opacity: 1; }
+.goalline { stroke: var(--wc-mute); stroke-width: 1; stroke-dasharray: 4 4; }
+.agrid { grid-template-columns: repeat(4, minmax(0, 1fr)) auto; }
+.anudge .unit { gap: 8px; }
+.anudge input[type=checkbox] { width: 20px; height: 20px; flex: none; padding: 0; }
+.aset code { font-size: 12px; }
+.link.quiet { padding: 0 4px; }
+@media (max-width: 600px) { .agrid { grid-template-columns: 1fr 1fr; } .agrid .add-btn { grid-column: 1 / -1; } }
+
 /* ======== home-dashboard look ======== */
 .wc.ov { padding: 0; }
 .week { padding: 4px 2px 0; }
@@ -2479,6 +2638,10 @@ path.past { opacity: .85; }
 .wtog.on { border-color: var(--lamp); }
 .files a { color: var(--lamp); }
 .tip { background: #0c1118; color: var(--text); border: 1px solid var(--line); box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+.abig b, .akcal b { font-family: var(--display); letter-spacing: -.02em; }
+.agoal i, .sbar { background: var(--lamp); fill: var(--lamp); }
+.agoal i.met, .sbar.met { background: var(--presence); fill: var(--presence); }
+.goalline { stroke: #7a8696; }
 `;
 
 if (!customElements.get("workout-overview-card")) customElements.define("workout-overview-card", WorkoutOverviewCard);

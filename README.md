@@ -40,6 +40,11 @@ Home Assistant.
 - **Calendar**: tap any day to check, fix or add sets.
 - **Body**: weight, body fat and measurements, height entered once, BMI with
   a trend line.
+- **Steps and calories, no watch needed** (Overview tab): today's steps from
+  your phone's Home Assistant app against a step goal, an estimate of the
+  calories you burned (resting, walking and gym), two weeks of history, and a
+  phone reminder at a time you choose (17:00 by default) when you're below
+  your goal. Also as sensors for your own dashboards.
 - **Gym arrival and departure** from a zone: a notification with today's plan
   when you arrive, a summary when you leave.
 - **Medication and supplements** (Meds tab): schedules like recurring
@@ -96,11 +101,42 @@ Each person needs to be linked to their Home Assistant user
 (**Settings > People**). Without location you can start and end visits by
 hand on the Workout tab.
 
+## Steps and calories
+
+The **Activity** section at the top of the Overview tab needs nothing extra
+if you use the Home Assistant phone app:
+
+- **Steps** come from the app's step sensors on the phone linked to your
+  person (the phone's own count and, on iPhone, Apple Health, which also
+  includes your Apple Watch). The higher of the two counts. Turn the sensors
+  on in the app under **Settings > Companion app > Sensors**.
+- **Calories** are an estimate of what you burned today so far:
+  - *resting*: the Mifflin-St Jeor formula from your weight and height
+    (Body section) and your age and sex (Activity > Settings), counted up
+    through the day;
+  - *walking*: steps x body weight x 0.0005 kcal;
+  - *gym*: your time at the gym (from the gym zone, or worked out from the
+    sets you logged) x body weight x 3.5 kcal an hour, for strength training.
+
+  When the app also reports measured active energy (a watch worn that day)
+  it's shown next to the estimate. Expect the estimate to be within 10-20 %:
+  good for comparing days, not a lab measurement.
+- **Reminder**: at the time you set (17:00 by default, or off) your phone
+  gets a message if you're below your step goal, with how far to go.
+
+Sensors for dashboards and automations (owner's profile):
+`sensor.workout_tracker_steps_today` and
+`sensor.workout_tracker_calories_burned_today` (attributes: resting,
+walking, gym, goal, 7-day averages).
+
+Different step sensors? Use the `workout_tracker.activity_settings` action
+with `steps: sensor.a, sensor.b`.
+
 ## Several people
 
 Each person sees their own data when they open **Workout**. To log for
 someone else, pick their name at the top of the page. Every person has
-their own rotation, sets, records, body data and gym time.
+their own rotation, sets, records, body data, gym time, steps and calories.
 
 ## Medication reminders
 

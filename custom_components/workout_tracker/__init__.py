@@ -2,7 +2,7 @@
 
 Adds a "Workout" page to the sidebar: log sets with progression advice,
 weekly overview, calendar editing, body measurements, gym visit tracking and
-CSV export. Data lives in a SQLite file in /config/workout_tracker/.
+CSV export, daily steps and estimated calories. Data lives in a SQLite file in /config/workout_tracker/.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, EVENT_STATE_CHANGED
 from homeassistant.core import CoreState, Event, HomeAssistant, ServiceCall, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_call_later, async_track_time_change
 
 from .tracker import Hub
@@ -29,7 +30,7 @@ from .tracker import Hub
 _LOGGER = logging.getLogger(__name__)
 
 DOMAIN = "workout_tracker"
-VERSION = "1.4.2"
+VERSION = "1.5.0"
 PANEL_URL = "workout"
 STATIC_URL = "/workout_tracker/static"
 EXPORT_URL = "/workout_tracker/export"
@@ -71,7 +72,9 @@ SERVICES = {
     "med_log": ("med_log", ["med_id", "status", "due", "at"]),
     "med_update": ("med_update", ["log_id", "status", "at"]),
     "med_undo": ("med_undo", ["log_id"]),
+    "activity_settings": ("activity_settings", ["goal", "age", "sex", "nudge", "steps", "energy"]),
 }
+PLATFORMS = ["sensor"]
 
 
 class HassHost:
@@ -93,6 +96,21 @@ class HassHost:
     def attributes(self, entity_id):
         st = self.hass.states.get(entity_id) if entity_id else None
         return dict(st.attributes) if st else None
+
+    def last_updated(self, entity_id):
+        """When the entity last reported, in local time (None if unknown)."""
+        from homeassistant.util import dt as dt_util
+        st = self.hass.states.get(entity_id) if entity_id else None
+        return dt_util.as_local(st.last_updated).replace(tzinfo=None) if st else None
+
+    def device_entities(self, entity_id):
+        """Every entity on the same device as entity_id (a phone's sensors, from its tracker)."""
+        reg = er.async_get(self.hass)
+        ent = reg.async_get(entity_id)
+        if not ent or not ent.device_id:
+            return []
+        return [e.entity_id for e in er.async_entries_for_device(reg, ent.device_id)
+                if not e.disabled_by]
 
     def has_service(self, domain, service):
         return self.hass.services.has_service(domain, service)
@@ -370,6 +388,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     for u in unsubs:
         entry.async_on_unload(u)
     entry.async_on_unload(entry.add_update_listener(_options_updated))
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
 
@@ -378,6 +397,8 @@ async def _options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    if not await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
+        return False
     for name in SERVICES:
         hass.services.async_remove(DOMAIN, name)
     store = hass.data.get(DOMAIN, {})

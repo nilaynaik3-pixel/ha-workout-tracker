@@ -13,6 +13,8 @@ Bundle keys (each {"state", "attributes", "last_updated"}):
   stats     everything the Overview tab draws
   export    the latest CSV export
   rest      the rest timer between sets
+  meds      medication and supplements
+  activity  today's steps and estimated calories, with two weeks of history
 """
 
 from __future__ import annotations
@@ -23,11 +25,12 @@ import time
 from datetime import date, timedelta
 
 from . import core as wc
+from .activity import ActivityMixin
 from .meds import MedsMixin
 
 _LOGGER = logging.getLogger(__name__)
 HISTORY = 3
-PARTS = ("plan", "view", "selected", "day", "stats", "export", "rest", "meds")
+PARTS = ("plan", "view", "selected", "day", "stats", "export", "rest", "meds", "activity")
 EVERYDAY = tuple(p for p in PARTS if p != "meds")   # what a workout change refreshes
 DEFAULT_REST = 90          # seconds between sets
 BUILTIN_CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "exercises.yaml")
@@ -37,7 +40,7 @@ def _truthy(v):
     return v in (True, "true", "on", 1, "1", "True")
 
 
-class Tracker(MedsMixin):
+class Tracker(MedsMixin, ActivityMixin):
     def __init__(self, host, db_path, config_path, export_dir, export_url, options, listeners=None,
                  user_id=None, owner=True):
         self.host = host
@@ -62,6 +65,7 @@ class Tracker(MedsMixin):
         self.rest = None            # {"exercise", "seconds", "started", "ends"} while running
         self._rest_cancel = None
         self._meds_init()
+        self._activity_init()
         self.bundle = {k: {"state": "none", "attributes": {}, "last_updated": "0"} for k in PARTS}
         self._version = 0
         # shared with the websocket layer so open cards survive a reload
@@ -207,6 +211,11 @@ class Tracker(MedsMixin):
         if "meds" in parts:
             m = await self.meds_part()
             self._set("meds", len(m["today"]), m)
+        if "activity" in parts:
+            try:
+                await self._publish_activity()
+            except Exception as err:  # noqa: BLE001  steps are a side feature: never block the rest
+                _LOGGER.warning("workout_tracker: activity update failed: %s", err)
         if "export" in parts:
             if self.export_info:
                 self._set("export", self.export_info["created"], {"files": self.export_info["files"]})
@@ -444,11 +453,11 @@ class Tracker(MedsMixin):
     # ------------------------------------------------------- body
     async def log_body(self, metric, value, day=None):
         await self.run(wc.add_body, self.db, metric, float(value), day or None)
-        await self.publish(("stats",))
+        await self.publish(("stats", "activity"))
 
     async def delete_body(self, entry_id):
         await self.run(wc.delete_body, self.db, int(entry_id))
-        await self.publish(("stats",))
+        await self.publish(("stats", "activity"))
 
     # ------------------------------------------------------- gym visits
     async def notify_(self, title, message, extra=None):
@@ -466,7 +475,7 @@ class Tracker(MedsMixin):
     async def gym_arrived(self):
         visit = await self.run(wc.start_visit, self.db)
         self.host.fire("workout_gym_arrived", {"start": visit["start"]})
-        await self.publish(("plan", "stats"))
+        await self.publish(("plan", "stats", "activity"))
         p = self.bundle["plan"]["attributes"]
         if p.get("next_main"):
             today = p["next_main"].title() + (f" + {p['next_addon'].title()}" if p.get("next_addon") else "")
@@ -475,7 +484,7 @@ class Tracker(MedsMixin):
     async def gym_left(self):
         visit = await self.run(wc.end_visit, self.db, None,
                                self.cfg["settings"].get("min_visit_minutes", 15))
-        await self.publish(("plan", "stats"))
+        await self.publish(("plan", "stats", "activity"))
         if not visit:
             return
         self.host.fire("workout_gym_left", visit)
@@ -611,6 +620,10 @@ class Hub:
                 await t.meds_tick(now)
             except Exception as err:  # one person's problem shouldn't stop the others
                 _LOGGER.warning("workout_tracker: medication reminders failed: %s", err)
+            try:
+                await t.activity_tick(now)
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning("workout_tracker: activity update failed: %s", err)
 
     async def med_action(self, action):
         """A Taken / Skip button on a reminder: WT_MED_TAKEN|<profile>|<med_id>|<due>."""
