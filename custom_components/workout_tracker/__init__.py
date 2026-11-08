@@ -30,7 +30,7 @@ from .tracker import Hub
 _LOGGER = logging.getLogger(__name__)
 
 DOMAIN = "workout_tracker"
-VERSION = "1.5.1"
+VERSION = "1.6.0"
 PANEL_URL = "workout"
 STATIC_URL = "/workout_tracker/static"
 EXPORT_URL = "/workout_tracker/export"
@@ -48,6 +48,8 @@ SERVICES = {
     "select_main": ("select_main", ["group"]),
     "toggle_addon": ("toggle_addon", ["group", "on"]),
     "suggest": ("suggest", []),
+    "toggle_group": ("toggle_group", ["group", "on"]),
+    "set_program": ("set_program", ["split", "goal"]),
     "add_exercise": ("add_exercise", ["name", "group", "step", "demo"]),
     "set_demo": ("set_demo", ["exercise", "demo"]),
     "rest_start": ("rest_start", ["seconds", "exercise"]),
@@ -61,6 +63,8 @@ SERVICES = {
     "delete_set": ("delete_set", ["set_id"]),
     "add_set": ("add_set", ["day", "exercise", "weight", "reps", "rpe"]),
     "log_body": ("log_body", ["metric", "value", "day"]),
+    "log_cardio": ("log_cardio", ["activity", "minutes", "distance", "level", "kcal", "hr", "day"]),
+    "delete_cardio": ("delete_cardio", ["entry_id"]),
     "delete_body": ("delete_body", ["entry_id"]),
     "gym_start": ("gym_arrived", []),
     "gym_end": ("gym_left", []),
@@ -88,6 +92,9 @@ class HassHost:
 
     def entity_ids(self, domain):
         return self.hass.states.async_entity_ids(domain)
+
+    def language(self):
+        return self.hass.config.language or "en"
 
     def state(self, entity_id):
         st = self.hass.states.get(entity_id) if entity_id else None

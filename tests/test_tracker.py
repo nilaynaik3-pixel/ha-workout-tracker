@@ -131,7 +131,7 @@ class TrackerTest(unittest.TestCase):
         self.assertEqual(derived["bmi"]["value"], 25.0)
         run(self.t.export())
         files = self.b("export")["attributes"]["files"]
-        self.assertEqual(len(files), 3)
+        self.assertEqual(len(files), 4)
         self.assertTrue(files[0]["url"].startswith("/workout_tracker/export/workout-"))
 
     def test_calendar_editing(self):

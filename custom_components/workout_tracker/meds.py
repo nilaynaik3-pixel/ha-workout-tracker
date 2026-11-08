@@ -405,8 +405,9 @@ def mark_reminded(db_path, med_id, due, count, now=None):
     con.close()
 
 
-def spoken(dose, second=False):
+def spoken(dose, second=False, lang="en"):
     """What the Echo says, per house personality (for script.say)."""
+    from .texts import LINES_NL, is_nl, tr
     name = dose["name"]
     what = f"{name}, {dose['dose']}" if dose["dose"] else name
     note = f" {dose['note'].rstrip('.')}." if dose["note"] else ""
@@ -430,6 +431,11 @@ def spoken(dose, second=False):
                       f"{name} o'clock. Even you can manage to swallow one thing on schedule.{note}",
                       f"Take your {what}. I'd do it for you, but I'm a smart speaker, not a miracle worker.{note}"],
         }
+    if is_nl(lang):
+        what = f"{name}, {dose['dose']}" if dose["dose"] else name
+        key = "Reminder: you haven't taken your {what} yet.{note}" if second else "Time for your {what}.{note}"
+        normal = tr(lang, key, what=what, note=note)
+        lines = {k: [x.format(name=name, what=what, note=note) for x in v] for k, v in LINES_NL[second].items()}
     return normal, lines
 
 
@@ -465,7 +471,7 @@ class MedsMixin:
         echo = self._echo_target()
         if not echo:
             return
-        normal, lines = spoken(dose, second)
+        normal, lines = spoken(dose, second, self.lang)
         try:
             if echo["via"] == "say":
                 await self.host.call_service("script", "say", {"message": normal, "lines": lines, "to": "echo"})
@@ -485,9 +491,11 @@ class MedsMixin:
             await self.publish(("meds",))
 
     async def _remind(self, dose, second):
+        from .texts import tr
+        lang = self.lang
         what = f"{dose['name']} ({dose['dose']})" if dose["dose"] else dose["name"]
-        title = f"Still to take: {dose['name']}" if second else f"Time for {dose['name']}"
-        body = f"{what} at {dose['time']}" + (f". {dose['note']}" if dose["note"] else "")
+        title = tr(lang, "Still to take: {name}" if second else "Time for {name}", name=dose["name"])
+        body = tr(lang, "{what} at {time}", what=what, time=dose["time"]) + (f". {dose['note']}" if dose["note"] else "")
         key = f"{dose['med_id']}|{dose['due']}"
         prof = self.user_id or ""
         await self.notify_(title, body, {
@@ -495,8 +503,8 @@ class MedsMixin:
             "url": "/workout?tab=meds", "clickAction": "/workout?tab=meds",
             "push": {"interruption-level": "time-sensitive"},
             "actions": [
-                {"action": f"WT_MED_TAKEN|{prof}|{key}", "title": "Taken"},
-                {"action": f"WT_MED_SKIP|{prof}|{key}", "title": "Skip", "destructive": True},
+                {"action": f"WT_MED_TAKEN|{prof}|{key}", "title": tr(lang, "Taken")},
+                {"action": f"WT_MED_SKIP|{prof}|{key}", "title": tr(lang, "Skip"), "destructive": True},
             ]})
         self.host.fire("workout_med_reminder", {"name": dose["name"], "due": dose["due"], "second": second})
         if self._is_home() and self._med_echo(dose["med_id"]):

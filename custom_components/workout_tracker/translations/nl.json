@@ -1,0 +1,45 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Workout Tracker",
+        "description": "Voegt een Training-pagina toe aan de zijbalk. Iedereen in huis krijgt een eigen profiel, op basis van zijn Home Assistant-gebruiker. Sportschooltracking is optioneel: kies je sportschoolzone; ieders telefoon wordt gevonden via zijn persoon.",
+        "data": {
+          "days_per_week": "Trainingsdagen per week (je weekdoel)",
+          "gym_zone": "Sportschoolzone (optioneel)",
+          "person": "Persoon om te volgen voor deze gebruiker (optioneel, wordt automatisch gekozen als leeg)",
+          "notify": "Meldingen",
+          "min_visit_minutes": "Negeer sportschoolbezoeken korter dan",
+          "owner": "Je bestaande trainingsgegevens horen bij"
+        },
+        "data_description": {
+          "gym_zone": "Maak er eerst een aan onder Instellingen > Ruimtes, labels & zones > Zones als je die nog niet hebt.",
+          "notify": "auto = de telefoon van de gevolgde persoon, off = geen, of een notify-actie zoals notify.mobile_app_mijn_telefoon.",
+          "owner": "Elke Home Assistant-gebruiker krijgt een eigen profiel. Trainingen die al zijn opgeslagen (bijv. uit de eerdere Pyscript-versie) gaan naar deze gebruiker. Anderen beginnen opnieuw."
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Workout Tracker is al ingesteld. Gebruik Configureren om de instellingen te wijzigen."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Workout Tracker-instellingen",
+        "data": {
+          "days_per_week": "Trainingsdagen per week (je weekdoel)",
+          "gym_zone": "Sportschoolzone (optioneel)",
+          "person": "Persoon om te volgen voor deze gebruiker (optioneel, wordt automatisch gekozen als leeg)",
+          "notify": "Meldingen",
+          "min_visit_minutes": "Negeer sportschoolbezoeken korter dan",
+          "owner": "Je bestaande trainingsgegevens horen bij"
+        },
+        "data_description": {
+          "notify": "auto = de telefoon van de gevolgde persoon, off = geen, of een notify-actie zoals notify.mobile_app_mijn_telefoon.",
+          "owner": "Elke Home Assistant-gebruiker krijgt een eigen profiel. Trainingen die al zijn opgeslagen (bijv. uit de eerdere Pyscript-versie) gaan naar deze gebruiker. Anderen beginnen opnieuw."
+        }
+      }
+    }
+  }
+}

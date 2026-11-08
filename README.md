@@ -16,9 +16,13 @@ Home Assistant.
 
 ## Features
 
-- **Rotation planner**: suggests today's main group (chest, shoulders, back,
-  legs) plus an add-on (biceps, triceps, abs) based on what you trained
-  longest ago.
+- **Training plans that roll on**: your own rotation, Push / Pull / Legs,
+  Upper / Lower, classic pairs, one group a day or full body. Whenever you
+  go, the next day in line is up; skipping a day loses nothing. Pick a goal
+  (strength 4×6, muscle 3×10, endurance 3×15, or your own) and it sets the
+  sets, reps and rest time.
+- **Combination tips** as you pick muscle groups: still recovering from
+  yesterday, too much for one session, or a good pairing.
 - **Fast logging**: weight and reps with +/-, effort (RPE 6-10) per set or for
   all sets at once, warm-up sets (the first set is marked as warm-up
   automatically), undo.
@@ -47,6 +51,13 @@ Home Assistant.
   your goal. Also as sensors for your own dashboards.
 - **Gym arrival and departure** from a zone: a notification with today's plan
   when you arrive, a summary when you leave.
+- **Cardio**: treadmill, run, walk, exercise bike, cycling, cross trainer,
+  rower, stair climber, swim, jump rope. Log minutes, distance, incline or
+  level, and optionally calories and heart rate. The Overview shows minutes
+  per week against the 150-minute guideline and your pace over time.
+- **English and Dutch**: follows your Home Assistant language, or pick one
+  at the bottom of the page. Phone and Echo messages use Home Assistant's
+  language. Exercise names stay in English.
 - **Medication and supplements** (Meds tab): schedules like recurring
   meetings (daily every N days, weekly on chosen days, one or more times a
   day, start and end date, or as needed), reminders on your phone with

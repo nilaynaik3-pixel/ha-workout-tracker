@@ -24,13 +24,16 @@ import os
 import time
 from datetime import date, timedelta
 
+from . import cardio as cd
 from . import core as wc
 from .activity import ActivityMixin
+from .texts import group as tgroup
+from .texts import tr
 from .meds import MedsMixin
 
 _LOGGER = logging.getLogger(__name__)
 HISTORY = 3
-PARTS = ("plan", "view", "selected", "day", "stats", "export", "rest", "meds", "activity")
+PARTS = ("plan", "view", "selected", "day", "stats", "export", "rest", "meds", "activity", "cardio")
 EVERYDAY = tuple(p for p in PARTS if p != "meds")   # what a workout change refreshes
 DEFAULT_REST = 90          # seconds between sets
 BUILTIN_CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "exercises.yaml")
@@ -54,8 +57,7 @@ class Tracker(MedsMixin, ActivityMixin):
         self.cfg = {"main": [], "addon": [], "groups": [], "exercises": {}, "settings": {}}
         self.person = ""
         self.notify = ""
-        self.main = None
-        self.addons = []
+        self.sel = []               # groups picked for today
         self.exercise = None
         self.log_day = None
         self.open_day = None
@@ -96,6 +98,7 @@ class Tracker(MedsMixin, ActivityMixin):
         demos = await self.run(wc.config_demos, BUILTIN_CONFIG)
         self.cfg = await self.run(wc.load_config, self.config_path, self.db, demos)
         self.prefs = await self.run(wc.get_prefs, self.db)
+        wc.apply_goal(self.cfg, self.program)
         s = self.cfg["settings"]
         for key in ("person", "gym_zone", "notify", "dashboard_url"):
             if key in self.options:
@@ -154,18 +157,41 @@ class Tracker(MedsMixin, ActivityMixin):
         attrs = self.host.attributes(z) or {}
         return str(attrs.get("friendly_name") or z.split(".", 1)[-1])
 
-    # ------------------------------------------------------- publishing
+    @property
+    def lang(self):
+        """Home Assistant's language, for phone and Echo messages."""
+        fn = getattr(self.host, "language", None)
+        return fn() if fn else "en"
+
+    @property
+    def program(self):
+        return wc.clean_program(self.prefs.get("program"))
+
+    # ------------------------------------------------------- selection state
+    @property
+    def main(self):
+        return next((g for g in self._groups() if g in self.cfg["main"]), None)
+
+    @property
+    def addons(self):
+        return [g for g in self._groups() if g in self.cfg["addon"]]
+
     def _groups(self):
-        return [self.main] + [g for g in self.cfg["addon"] if g in self.addons] if self.main else list(self.addons)
+        """Today's groups: big groups first, in the configured order."""
+        order = {g: i for i, g in enumerate(self.cfg["groups"])}
+        return sorted((g for g in self.sel if g in order), key=order.get)
+
+    # ------------------------------------------------------- publishing
 
     async def publish(self, parts=EVERYDAY):
         parts = set(parts)
         if "plan" in parts:
-            p = await self.run(wc.plan, self.db, self.cfg)
+            p = await self.run(wc.plan, self.db, self.cfg, None, self.program)
             visit = await self.run(wc.open_visit, self.db)
             p.update({
                 "current_main": self.main,
                 "current_addons": list(self.addons),
+                "current_groups": self._groups(),
                 "gym_visit": visit,
                 "gym_tracking": bool(self.person and self.gym_zone and self.host.attributes(self.gym_zone) is not None),
                 "gym_person": self.person,
@@ -208,6 +234,9 @@ class Tracker(MedsMixin, ActivityMixin):
                 "phone": bool(self.notify),
                 **(self.rest or {}),
             })
+        if "cardio" in parts:
+            c = await self.run(cd.cardio_part, self.db)
+            self._set("cardio", c["week_minutes"], c)
         if "meds" in parts:
             m = await self.meds_part()
             self._set("meds", len(m["today"]), m)
@@ -224,9 +253,8 @@ class Tracker(MedsMixin, ActivityMixin):
         self._push()
 
     async def apply_suggestion(self):
-        p = await self.run(wc.plan, self.db, self.cfg)
-        self.main = p["next_main"]
-        self.addons = [p["next_addon"]] if p["next_addon"] else []
+        p = await self.run(wc.plan, self.db, self.cfg, None, self.program)
+        self.sel = list(p["next_groups"])
 
     async def start(self):
         await self.load()
@@ -235,21 +263,46 @@ class Tracker(MedsMixin, ActivityMixin):
 
     # ------------------------------------------------------- selection
     async def select_main(self, group):
+        """Switch the big group (add-ons stay)."""
         g = str(group or "").lower()
         if g in self.cfg["main"]:
-            self.main = g
+            self.sel = [x for x in self.sel if x not in self.cfg["main"]] + [g]
             await self.publish(("plan", "view", "selected"))
+
+    async def toggle_group(self, group, on=None):
+        """Add or remove any group from today's selection."""
+        g = str(group or "").lower()
+        if g not in self.cfg["groups"]:
+            return
+        want = (g not in self.sel) if on is None else _truthy(on)
+        if want and g not in self.sel:
+            self.sel.append(g)
+        elif not want and g in self.sel:
+            self.sel.remove(g)
+        await self.publish(("plan", "view", "selected"))
+
+    async def set_program(self, split=None, goal=None):
+        prog = dict(self.program)
+        if split not in (None, ""):
+            prog["split"] = str(split)
+        if goal not in (None, ""):
+            prog["goal"] = str(goal)
+        prog = wc.clean_program(prog)
+        await self.run(wc.set_pref, self.db, "program", prog)
+        self.prefs["program"] = prog
+        rule = wc.GOALS.get(prog["goal"])
+        if goal not in (None, "") and rule:     # a new goal brings its rest time
+            await self.run(wc.set_pref, self.db, "rest_seconds", rule["rest"])
+            self.prefs["rest_seconds"] = rule["rest"]
+        await self.load()
+        await self.apply_suggestion()
+        await self.publish(EVERYDAY)
 
     async def toggle_addon(self, group, on=None):
         g = str(group or "").lower()
         if g not in self.cfg["addon"]:
             return
-        want = (g not in self.addons) if on is None else _truthy(on)
-        if want and g not in self.addons:
-            self.addons.append(g)
-        elif not want and g in self.addons:
-            self.addons.remove(g)
-        await self.publish(("plan", "view", "selected"))
+        await self.toggle_group(g, on)
 
     async def select_exercise(self, exercise):
         if exercise in self.cfg["exercises"]:
@@ -376,20 +429,21 @@ class Tracker(MedsMixin, ActivityMixin):
         self.rest = None
         self.host.fire("workout_rest_over", {"exercise": exercise})
         if self.rest_notify:
-            await self.notify_("Rest over", self._next_set_text(exercise),
+            await self.notify_(tr(self.lang, "Rest over"), self._next_set_text(exercise),
                                {"tag": "workout-rest", "push": {"interruption-level": "time-sensitive"}})
         await self.publish(("rest",))
 
     def _next_set_text(self, exercise):
+        lang = self.lang
         sel = self.bundle["selected"]["attributes"] or {}
         if not exercise or sel.get("name") != exercise:
-            return "Time for your next set."
+            return tr(lang, "Time for your next set.")
         done, target = sel.get("today_done", 0), sel.get("target_sets", 3)
         if done >= target:
-            return f"{exercise}: {done} sets done. On to the next exercise."
+            return tr(lang, "{ex}: {n} sets done. On to the next exercise.", ex=exercise, n=done)
         w = sel.get("default_weight") or 0
-        load = f"{wc._fmt_w(w)} kg × {sel.get('default_reps')}" if w else f"{sel.get('default_reps')} reps"
-        return f"{exercise}, set {done + 1} of {target}: {load}"
+        load = f"{wc._fmt_w(w)} kg × {sel.get('default_reps')}" if w else tr(lang, "{n} reps", n=sel.get("default_reps"))
+        return tr(lang, "{ex}, set {i} of {n}: {load}", ex=exercise, i=done + 1, n=target, load=load)
 
     async def rest_start(self, seconds=None, exercise=None):
         secs = int(float(seconds)) if seconds not in (None, "") else (self.rest_seconds or DEFAULT_REST)
@@ -450,6 +504,18 @@ class Tracker(MedsMixin, ActivityMixin):
                        None if not rpe else float(rpe))
         await self.publish()
 
+    # ------------------------------------------------------- cardio
+    async def log_cardio(self, activity, minutes, distance=None, level=None, kcal=None, hr=None, day=None):
+        d = str(day or "").strip() or self.log_day
+        if d and date.fromisoformat(d) > date.today():
+            return
+        await self.run(cd.log_cardio, self.db, activity, minutes, distance, level, kcal, hr, d)
+        await self.publish(("cardio", "stats", "day", "plan"))
+
+    async def delete_cardio(self, entry_id):
+        await self.run(cd.delete_cardio, self.db, int(entry_id))
+        await self.publish(("cardio", "stats", "day"))
+
     # ------------------------------------------------------- body
     async def log_body(self, metric, value, day=None):
         await self.run(wc.add_body, self.db, metric, float(value), day or None)
@@ -477,9 +543,9 @@ class Tracker(MedsMixin, ActivityMixin):
         self.host.fire("workout_gym_arrived", {"start": visit["start"]})
         await self.publish(("plan", "stats", "activity"))
         p = self.bundle["plan"]["attributes"]
-        if p.get("next_main"):
-            today = p["next_main"].title() + (f" + {p['next_addon'].title()}" if p.get("next_addon") else "")
-            await self.notify_("At the gym", f"Today: {today}")
+        if p.get("next_groups"):
+            today = " + ".join(tgroup(self.lang, g) for g in p["next_groups"])
+            await self.notify_(tr(self.lang, "At the gym"), tr(self.lang, "Today: {plan}", plan=today))
 
     async def gym_left(self):
         visit = await self.run(wc.end_visit, self.db, None,
@@ -489,11 +555,17 @@ class Tracker(MedsMixin, ActivityMixin):
             return
         self.host.fire("workout_gym_left", visit)
         day = await self.run(wc.day_detail, self.db, self.cfg, visit["start"][:10])
-        groups = " + ".join(g.title() for g in day["groups"]) or "No sets logged"
+        lang = self.lang
+        groups = " + ".join(tgroup(lang, g) for g in day["groups"])
+        mins = round(sum(c["minutes"] for c in day.get("cardio") or []))
+        if mins:
+            groups = (groups + " + " if groups else "") + tr(lang, "{m} min cardio", m=mins)
+        groups = groups or tr(lang, "No sets logged")
         prs = ""
         if self.last_pr and self.last_pr.get("day") == visit["start"][:10]:
-            prs = f", new record on {self.last_pr['exercise']}"
-        await self.notify_("Workout done", f"{visit['minutes']} min, {day['sets']} sets: {groups}{prs}")
+            prs = tr(lang, ", new record on {ex}", ex=self.last_pr["exercise"])
+        await self.notify_(tr(lang, "Workout done"), tr(lang, "{m} min, {n} sets: {groups}{prs}",
+                                                        m=visit["minutes"], n=day["sets"], groups=groups, prs=prs))
 
     async def person_changed(self, old, new):
         name = self.gym_zone_name().lower()

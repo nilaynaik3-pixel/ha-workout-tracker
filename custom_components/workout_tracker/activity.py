@@ -300,9 +300,12 @@ class ActivityMixin:
             self._nudged_day = day
             left = a["goal"] - a["steps"]
             minutes = max(1, -(-left // 100))       # about 100 steps a minute
-            await self.notify_(f"{left:,} steps to go",
-                               f"{a['steps']:,} of {a['goal']:,} so far today. "
-                               f"About {minutes} minutes of walking gets you there.",
+            from .texts import is_nl, tr
+            lang = self.lang
+            fmt = (lambda x: f"{x:,}".replace(",", ".")) if is_nl(lang) else (lambda x: f"{x:,}")
+            await self.notify_(tr(lang, "{n} steps to go", n=fmt(left)),
+                               tr(lang, "{s} of {g} so far today. About {m} minutes of walking gets you there.",
+                                  s=fmt(a["steps"]), g=fmt(a["goal"]), m=minutes),
                                {"tag": "workout-steps", "url": "/workout?tab=overview",
                                 "clickAction": "/workout?tab=overview"})
 

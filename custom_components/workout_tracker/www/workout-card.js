@@ -15,18 +15,23 @@ const FONT_URL =
   "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&display=swap";
 
 const ACTIONS = {
-  increase: { cls: "up", verb: (w) => `Go up to ${w} kg` },
-  hold: { cls: "stay", verb: (w) => `Stay at ${w} kg` },
-  reduce: { cls: "down", verb: (w) => `Drop to ${w} kg` },
-  start: { cls: "new", verb: (w) => (w ? `Start around ${w} kg` : "Find your weight") },
+  increase: { cls: "up", verb: (w) => L("Go up to {w} kg", { w }) },
+  hold: { cls: "stay", verb: (w) => L("Stay at {w} kg", { w }) },
+  reduce: { cls: "down", verb: (w) => L("Drop to {w} kg", { w }) },
+  start: { cls: "new", verb: (w) => (w ? L("Start around {w} kg", { w }) : L("Find your weight")) },
 };
 const RPES = [6, 7, 7.5, 8, 8.5, 9, 9.5, 10];
-const WT_VERSION = "1.5.1";
+const WT_VERSION = "1.6.0";
 const REST_CHOICES = [0, 60, 90, 120, 180];
 
 const esc = (s) =>
   String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const num = (x) => (x === null || x === undefined || x === "" ? "" : String(Math.round(Number(x) * 100) / 100));
+/** A number for display (decimal comma in Dutch; every input also accepts a comma). */
+const num = (x) => {
+  if (x === null || x === undefined || x === "") return "";
+  const t = String(Math.round(Number(x) * 100) / 100);
+  return typeof WT_LANG !== "undefined" && WT_LANG.get() === "nl" ? t.replace(".", ",") : t;
+};
 const title = (s) => String(s || "").replace(/^./, (c) => c.toUpperCase());
 
 const mmss = (secs) => {
@@ -85,6 +90,636 @@ function demoAnim(id, cls = "") {
   </div>`;
 }
 
+// ---------------------------------------------------------------- language
+/** English or Dutch: Home Assistant's language for this user, unless picked on the page. */
+const WT_LANG = {
+  pick: (() => { try { return localStorage.getItem("workout-tracker-lang") || "auto"; } catch (e) { return "auto"; } })(),
+  ha: "en",
+  get() { return this.pick === "auto" ? (String(this.ha || "").toLowerCase().startsWith("nl") ? "nl" : "en") : this.pick; },
+  set(v) {
+    this.pick = v;
+    try { localStorage.setItem("workout-tracker-lang", v); } catch (e) { /* storage blocked */ }
+  },
+};
+/** Translate an English text ({name} placeholders filled from `v`). */
+function L(text, v) {
+  let t = text;
+  if (WT_LANG.get() === "nl" && text) {
+    if (NL[text]) t = NL[text];
+    else {
+      const hit = NL_RX.find(([re]) => re.test(text));
+      if (hit) t = text.replace(hit[0], hit[1]);
+    }
+  }
+  if (v) t = t.replace(/\{(\w+)\}/g, (m, k) => (v[k] ?? m));
+  return t;
+}
+const nl = () => WT_LANG.get() === "nl";
+// Dutch texts, keyed by the English.
+const NL = {
+  "Go up to {w} kg": "Ga naar {w} kg",
+  "Stay at {w} kg": "Blijf op {w} kg",
+  "Drop to {w} kg": "Zak naar {w} kg",
+  "Start around {w} kg": "Begin rond {w} kg",
+  "Find your weight": "Zoek je gewicht",
+  "{g} trained yesterday: muscles need about 48 hours to recover.": "{g} gisteren getraind: spieren hebben zo'n 48 uur nodig om te herstellen.",
+  "{big} yesterday also worked your {small}: they may still be tired.": "{big} gisteren heeft ook je {small} getraind: die kunnen nog moe zijn.",
+  "{small} trained yesterday help with {big}: expect a bit less strength.": "{small} gisteren getraind helpen bij {big}: reken op iets minder kracht.",
+  "That's a lot for one session: the last groups will get less effort. Two or three groups works best.": "Dat is veel voor \u00e9\u00e9n training: de laatste groepen krijgen minder energie. Twee of drie groepen werkt het best.",
+  "Legs and back both load your lower back: keep the heaviest lifts for one of them.": "Benen en rug belasten allebei je onderrug: houd de zwaarste oefeningen voor \u00e9\u00e9n van de twee.",
+  "Everything here is rested.": "Alles hier is uitgerust.",
+  "{v}% incline": "{v}% helling",
+  "level {v}": "niveau {v}",
+  "Logged {m} min {a}": "{m} min {a} opgeslagen",
+  "Couldn't log it: {e}": "Opslaan lukte niet: {e}",
+  "Delete this cardio session?": "Deze cardiotraining verwijderen?",
+  "Couldn't log the set: {e}": "Set opslaan lukte niet: {e}",
+  "End this gym visit now?": "Dit sportschoolbezoek nu be\u00ebindigen?",
+  "Type a name first.": "Typ eerst een naam.",
+  "Added {name}.": "{name} toegevoegd.",
+  "Remove the demo from {ex}?": "Demo bij {ex} verwijderen?",
+  "Hide {ex}? Its history is kept, and adding it again with the same name brings it back.": "{ex} verbergen? De geschiedenis blijft bewaard, en met dezelfde naam opnieuw toevoegen haalt hem terug.",
+  "Loading\u2026": "Laden\u2026",
+  "Pick an exercise to start logging.": "Kies een oefening om te beginnen.",
+  "Rest over": "Rust voorbij",
+  "Rest over: time for the next set": "Rust voorbij: tijd voor de volgende set",
+  "Rest after {ex}": "Rust na {ex}",
+  "Rest": "Rust",
+  "Skip": "Overslaan",
+  "Rest between sets": "Rust tussen sets",
+  "Off": "Uit",
+  "Phone alert when rest is over": "Melding op je telefoon als de rust voorbij is",
+  "Start a rest now": "Nu een rustpauze starten",
+  "Rest timer: {t} after each set": "Rusttimer: {t} na elke set",
+  "Rest timer: off": "Rusttimer: uit",
+  "Add a demo picture": "Demofoto toevoegen",
+  "Hide how to do it": "Uitleg verbergen",
+  "Show how to do it": "Laat zien hoe het moet",
+  "also {m}": "ook {m}",
+  "Loading the instructions\u2026": "Uitleg laden\u2026",
+  "Pick a different demo": "Andere demo kiezen",
+  "Remove": "Verwijderen",
+  "Close": "Sluiten",
+  "Demo for {ex}": "Demo voor {ex}",
+  "Find an exercise in the library": "Zoek een oefening in de bibliotheek",
+  "Search {n} exercises, e.g. cable fly": "Zoek in {n} oefeningen, bijv. cable fly",
+  "All": "Alle",
+  "Couldn't load the library ({e}).": "Bibliotheek laden lukte niet ({e}).",
+  "Cancel": "Annuleren",
+  "Nothing found. Try fewer words, or All groups.": "Niets gevonden. Probeer minder woorden, of Alle groepen.",
+  "Nothing found. Try fewer words.": "Niets gevonden. Probeer minder woorden.",
+  "today": "vandaag",
+  "new": "nieuw",
+  "{n}d": "{n}d",
+  "Due today": "Vandaag aan de beurt",
+  "Cardio": "Cardio",
+  "{m} min wk": "{m} min/wk",
+  "none yet": "nog niets",
+  "{plan} \u00b7 today: {day}": "{plan} \u00b7 vandaag: {day}",
+  "{plan} \u00b7 today's suggestion": "{plan} \u00b7 voorstel voor vandaag",
+  "Change plan": "Plan wijzigen",
+  "Then": "Daarna",
+  "Back to today's plan": "Terug naar het plan van vandaag",
+  "fits your {n} days": "past bij je {n} dagen",
+  "rest": "rust",
+  "Training plan": "Trainingsplan",
+  "The plan rolls on: whenever you go, the next day in line is up. Skip a day and nothing is lost.": "Het plan rolt door: wanneer je ook gaat, de volgende dag is aan de beurt. Een dag overslaan is geen probleem.",
+  "Goal": "Doel",
+  "Use this plan": "Dit plan gebruiken",
+  "At the gym since {t}": "In de sportschool sinds {t}",
+  "End visit": "Bezoek be\u00ebindigen",
+  "Not at the gym": "Niet in de sportschool",
+  "Gym time not tracked by location": "Sportschooltijd niet bijgehouden via locatie",
+  "Start a visit": "Bezoek starten",
+  "Exercises": "Oefeningen",
+  "No exercises in these groups yet. Add one under Manage exercises.": "Nog geen oefeningen in deze groepen. Voeg er een toe onder Oefeningen beheren.",
+  "Warm-up: {r} reps \u00d7 {w} kg": "Warming-up: {r} herh. \u00d7 {w} kg",
+  "{r} reps \u00d7 {w} kg": "{r} herh. \u00d7 {w} kg",
+  "Set {n} to do": "Set {n} nog te doen",
+  "New record": "Nieuw record",
+  "reps": "herh.",
+  "was {v}": "was {v}",
+  "Nice": "Top",
+  "Seat height, grip, which machine\u2026": "Zithoogte, grip, welk apparaat\u2026",
+  "Save note": "Notitie opslaan",
+  "Edit note": "Notitie bewerken",
+  "Add a note (seat height, grip\u2026)": "Notitie toevoegen (zithoogte, grip\u2026)",
+  "Logging for {d}": "Opslaan voor {d}",
+  "Sets you log now are saved to that day.": "Sets die je nu opslaat komen op die dag.",
+  "Back to today": "Terug naar vandaag",
+  "for {n} reps": "voor {n} herh.",
+  "Less weight": "Minder gewicht",
+  "Weight in kg": "Gewicht in kg",
+  "kg \u00b7 bodyweight": "kg \u00b7 lichaamsgewicht",
+  "More weight": "Meer gewicht",
+  "Fewer reps": "Minder herhalingen",
+  "Reps": "Herhalingen",
+  "More reps": "Meer herhalingen",
+  "Warm-up set": "Warming-upset",
+  "Not counted in advice, records or set totals": "Telt niet mee voor advies, records of aantal sets",
+  "How hard was it (RPE)": "Hoe zwaar was het (RPE)",
+  "How hard?": "Hoe zwaar?",
+  "Log warm-up": "Warming-up opslaan",
+  "Log set {n}": "Set {n} opslaan",
+  "Undo last set": "Laatste set ongedaan maken",
+  "Less": "Minder",
+  "More": "Meer",
+  "% incline": "% helling",
+  "level": "niveau",
+  "Last time": "Vorige keer",
+  "First time": "Eerste keer",
+  "Log how long you did it; distance and the rest are optional.": "Vul in hoe lang je het deed; afstand en de rest zijn optioneel.",
+  "Minutes": "Minuten",
+  "Distance": "Afstand",
+  "Fewer details": "Minder details",
+  "Calories and heart rate": "Calorie\u00ebn en hartslag",
+  "Calories": "Calorie\u00ebn",
+  "kcal": "kcal",
+  "Average heart rate": "Gemiddelde hartslag",
+  "bpm": "spm",
+  "Log {m} min": "{m} min opslaan",
+  "of {t} min cardio this week": "van {t} min cardio deze week",
+  "Delete": "Verwijderen",
+  "No history yet for {ex}. Your first logged session sets the baseline.": "Nog geen geschiedenis voor {ex}. Je eerste training is het startpunt.",
+  "Estimated max over the last {n} sessions": "Geschat maximum over de laatste {n} trainingen",
+  "{p}% vs last session": "{p}% t.o.v. vorige keer",
+  "estimated max": "geschat maximum",
+  "Demo from the library": "Demo uit de bibliotheek",
+  "Manage exercises": "Oefeningen beheren",
+  "Search the exercise library": "Zoek in de oefeningenbibliotheek",
+  "Name": "Naam",
+  "e.g. Cable fly": "bijv. Cable fly",
+  "Muscle group": "Spiergroep",
+  "Weight step": "Gewichtsstap",
+  "Add exercise": "Oefening toevoegen",
+  "Hide {ex} from the lists": "{ex} verbergen in de lijsten",
+  "No stats yet": "Nog geen statistieken",
+  "Couldn't open this day: {e}": "Deze dag openen lukte niet: {e}",
+  "Couldn't save: {e}": "Opslaan lukte niet: {e}",
+  "Weight must be 0 or more and reps at least 1.": "Gewicht moet 0 of meer zijn en herhalingen minstens 1.",
+  "Saved": "Opgeslagen",
+  "Added a set of {ex}": "Set {ex} toegevoegd",
+  "Set removed": "Set verwijderd",
+  "Remove?": "Verwijderen?",
+  "Removed": "Verwijderd",
+  "Marked as working set": "Gemarkeerd als werkset",
+  "Marked as warm-up": "Gemarkeerd als warming-up",
+  "Enter a number first.": "Vul eerst een getal in.",
+  "{n} sets: {g}": "{n} sets: {g}",
+  "{m} min cardio": "{m} min cardio",
+  "rest day": "rustdag",
+  "Calendar": "Kalender",
+  "Previous month": "Vorige maand",
+  "Next month": "Volgende maand",
+  "No workouts logged this month. Tap a day to add one.": "Deze maand nog geen trainingen. Tik op een dag om er een toe te voegen.",
+  "Set": "Set",
+  "Weight": "Gewicht",
+  "Type": "Soort",
+  "Set {n} weight in kg": "Set {n} gewicht in kg",
+  "Set {n} reps": "Set {n} herhalingen",
+  "Set {n} RPE": "Set {n} RPE",
+  "Remove set {n}": "Set {n} verwijderen",
+  "at the gym {a}\u2013{b} ({m} min)": "in de sportschool {a}\u2013{b} ({m} min)",
+  "at the gym since {t}": "in de sportschool sinds {t}",
+  "Changes save when you leave a field; W marks a warm-up.": "Wijzigingen worden opgeslagen als je een veld verlaat; W markeert een warming-up.",
+  "Cardio only. Add exercises below if you also lifted.": "Alleen cardio. Voeg hieronder oefeningen toe als je ook kracht hebt getraind.",
+  "Nothing logged on this day. Add the exercises you did below.": "Niets opgeslagen op deze dag. Voeg hieronder de oefeningen toe die je deed.",
+  "Add an exercise": "Oefening toevoegen",
+  "Choose\u2026": "Kies\u2026",
+  "Time in the gym": "Tijd in de sportschool",
+  "Nothing yet. It fills in from gym arrivals and departures, or from when you log your first and last set.": "Nog niets. Dit vult zich met aankomst en vertrek bij de sportschool, of met je eerste en laatste set.",
+  "{t} estimated from logged sets": "{t} geschat uit opgeslagen sets",
+  "Week of {d}": "Week van {d}",
+  "No gym time": "Geen sportschooltijd",
+  "This week": "Deze week",
+  "so far this week": "tot nu toe deze week",
+  "About {t} per visit.": "Zo'n {t} per bezoek.",
+  "This week: {t}.": "Deze week: {t}.",
+  "Hours in the gym per week": "Uren in de sportschool per week",
+  "Nothing yet. Turn on Cardio on the Workout tab to log treadmill, bike, rower and more.": "Nog niets. Zet Cardio aan op het tabblad Training om loopband, fiets, roeier en meer op te slaan.",
+  "{n} sessions": "{n} trainingen",
+  "No cardio": "Geen cardio",
+  "{t} min goal": "doel {t} min",
+  "{s} s/km faster": "{s} s/km sneller",
+  "{s} s/km slower": "{s} s/km langzamer",
+  "{n} times": "{n} keer",
+  "last {d}": "laatst {d}",
+  "this week, goal {t}": "deze week, doel {t}",
+  "About {m} min a week on average.": "Gemiddeld zo'n {m} min per week.",
+  "Minutes of cardio per week": "Minuten cardio per week",
+  "Body weight over time": "Lichaamsgewicht door de tijd",
+  "BMI over time": "BMI door de tijd",
+  "{c} since {d}": "{c} sinds {d}",
+  "Height": "Lengte",
+  "Change": "Wijzigen",
+  "Add your height (Measurement \u2192 Height) to see your BMI.": "Vul je lengte in (Meting \u2192 Lengte) om je BMI te zien.",
+  "Remove {m} on {d}": "{m} van {d} verwijderen",
+  "Body": "Lichaam",
+  "Log your body weight and measurements to see how they change alongside your lifts.": "Houd je gewicht en maten bij om te zien hoe ze veranderen naast je kracht.",
+  "Measurement": "Meting",
+  "Today's value": "Waarde van vandaag",
+  "Save": "Opslaan",
+  "Recent entries": "Recente metingen",
+  "All sets": "Alle sets",
+  "Body measurements": "Lichaamsmaten",
+  "Gym visits": "Sportschoolbezoeken",
+  "Export": "Exporteren",
+  "Exporting\u2026": "Exporteren\u2026",
+  "Export again": "Opnieuw exporteren",
+  "Export to CSV": "Exporteren naar CSV",
+  "CSV files you can open in Excel, Numbers or Google Sheets.": "CSV-bestanden die je opent in Excel, Numbers of Google Sheets.",
+  "Last export {t}.": "Laatste export {t}.",
+  "{n} rows": "{n} regels",
+  "Coming up": "Komt nog",
+  "Rest day": "Rustdag",
+  "of {t} workouts this week": "van {t} trainingen deze week",
+  "{n} to go": "nog {n}",
+  "Weekly target reached": "Weekdoel gehaald",
+  "{n} workouts logged in total": "{n} trainingen in totaal",
+  "Weight progression": "Gewichtsverloop",
+  "Log a few sessions and your progression shows up here.": "Sla een paar trainingen op en je vooruitgang verschijnt hier.",
+  "All groups": "Alle groepen",
+  "Exercise": "Oefening",
+  "All exercises (compare)": "Alle oefeningen (vergelijken)",
+  "Reps (bodyweight)": "Herhalingen (lichaamsgewicht)",
+  "Working weight": "Werkgewicht",
+  "Estimated max": "Geschat maximum",
+  "Top set {w} kg \u00d7 {r}, {n} sets": "Topset {w} kg \u00d7 {r}, {n} sets",
+  "One session so far": "Tot nu toe \u00e9\u00e9n training",
+  "{what} unchanged over {n} sessions": "{what} gelijk over {n} trainingen",
+  "Show the numbers": "Toon de cijfers",
+  "Session": "Training",
+  "Top set": "Topset",
+  "Sets": "Sets",
+  "Est. max": "Gesch. max",
+  "No sessions yet in this group.": "Nog geen trainingen in deze groep.",
+  "Show {ex} on its own": "Alleen {ex} tonen",
+  "all groups": "alle groepen",
+  "Showing your {n} most-trained exercises; pick a muscle group to see the rest.": "Je {n} meest getrainde oefeningen; kies een spiergroep voor de rest.",
+  "Change in estimated max since each exercise's first session ({g}). Tap a name to see it on its own.": "Verandering in geschat maximum sinds de eerste training per oefening ({g}). Tik op een naam om die apart te zien.",
+  "Progression of {n} exercises in {g}": "Verloop van {n} oefeningen in {g}",
+  "First": "Eerste",
+  "Latest": "Laatste",
+  "Sets per week": "Sets per week",
+  "About {n} sets in an active week": "Zo'n {n} sets in een actieve week",
+  "No sets logged in the last 12 weeks": "Geen sets in de afgelopen 12 weken",
+  "Sets per week for the last {n} weeks": "Sets per week over de afgelopen {n} weken",
+  "Fewer sets": "Minder sets",
+  "Consistency": "Regelmaat",
+  "{n} training days in the last {w} weeks": "{n} trainingsdagen in de afgelopen {w} weken",
+  "Training calendar, {n} training days": "Trainingskalender, {n} trainingsdagen",
+  "not yet": "nog niet",
+  "yesterday": "gisteren",
+  "{n} days ago": "{n} dagen geleden",
+  "{n} sets in the last 4 weeks": "{n} sets in de afgelopen 4 weken",
+  "Last trained {w}": "Laatst getraind {w}",
+  "Muscle balance": "Spierbalans",
+  "Sets in the last 4 weeks, and when you last trained each group": "Sets in de afgelopen 4 weken, en wanneer je elke groep laatst trainde",
+  "Personal bests": "Persoonlijke records",
+  "Your heaviest lifts will collect here.": "Je zwaarste gewichten verschijnen hier.",
+  "Heaviest working weight per exercise, most recent first": "Zwaarste werkgewicht per oefening, nieuwste eerst",
+  "New": "Nieuw",
+  "As needed": "Wanneer nodig",
+  "Add a time": "Tijd toevoegen",
+  "at {t}": "om {t}",
+  "and": "en",
+  "Every {n} days": "Elke {n} dagen",
+  "Every day": "Elke dag",
+  "Pick at least one day": "Kies minstens \u00e9\u00e9n dag",
+  "weekdays": "werkdagen",
+  "until {d}": "tot {d}",
+  "Saved.": "Opgeslagen.",
+  "Logged {m}.": "{m} opgeslagen.",
+  "it": "het",
+  "Delete {m}? Its history is kept.": "{m} verwijderen? De geschiedenis blijft bewaard.",
+  "Give it a name.": "Geef het een naam.",
+  "Saved {m}.": "{m} opgeslagen.",
+  "Dismiss": "Sluiten",
+  "Today": "Vandaag",
+  "Yesterday": "Gisteren",
+  "Taken": "Ingenomen",
+  "Skipped": "Overgeslagen",
+  "at": "om",
+  "Taken at": "Ingenomen om",
+  "Clear": "Wissen",
+  "Edit": "Bewerken",
+  "Missed": "Gemist",
+  "No Echo found, so reminders go to your phone only.": "Geen Echo gevonden, dus herinneringen gaan alleen naar je telefoon.",
+  "Reminders go to your phone{p}, and to the Echo in the house personality when you're home.": "Herinneringen gaan naar je telefoon{p}, en naar de Echo in de stijl van het huis als je thuis bent.",
+  "Reminders go to your phone{p}, and to the Echo when you're home.": "Herinneringen gaan naar je telefoon{p}, en naar de Echo als je thuis bent.",
+  " (no phone found)": " (geen telefoon gevonden)",
+  "Previous day": "Vorige dag",
+  "Next day": "Volgende dag",
+  "Doses taken of all scheduled doses, last 30 days": "Ingenomen van alle geplande doses, afgelopen 30 dagen",
+  "{p}% taken \u00b7 30 days": "{p}% ingenomen \u00b7 30 dagen",
+  "Nothing scheduled today.": "Vandaag niets gepland.",
+  "Nothing scheduled that day.": "Die dag niets gepland.",
+  "No medicines yet. Add your first one.": "Nog geen medicijnen. Voeg je eerste toe.",
+  "Today at": "Vandaag om",
+  "Took one": "E\u00e9n genomen",
+  "Tap Taken to mark a past dose; Edit to change the time.": "Tik op Ingenomen om een eerdere dosis te markeren; Bewerken om de tijd te wijzigen.",
+  "Last 14 days": "Afgelopen 14 dagen",
+  "{a} of {b} taken": "{a} van {b} ingenomen",
+  "nothing scheduled": "niets gepland",
+  "Supplement": "Supplement",
+  "Medication": "Medicijn",
+  "Paused": "Gepauzeerd",
+  "phone only": "alleen telefoon",
+  "Edit medicine & schedule": "Medicijn & schema bewerken",
+  "Resume": "Hervatten",
+  "Pause": "Pauzeren",
+  "Medicines & supplements": "Medicijnen & supplementen",
+  "Add": "Toevoegen",
+  "Add a medicine or supplement, pick when you take it, and you'll get reminders.": "Voeg een medicijn of supplement toe, kies wanneer je het neemt, en je krijgt herinneringen.",
+  "taken": "ingenomen",
+  "partly": "deels",
+  "missed": "gemist",
+  "skipped": "overgeslagen",
+  "Edit {m}": "{m} bewerken",
+  "Add a medicine or supplement": "Medicijn of supplement toevoegen",
+  "e.g. Vitamin D": "bijv. Vitamine D",
+  "Dose": "Dosis",
+  "1 tablet, 500 mg": "1 tablet, 500 mg",
+  "Note": "Notitie",
+  "with food": "bij het eten",
+  "Repeat": "Herhalen",
+  "Daily": "Dagelijks",
+  "Weekly": "Wekelijks",
+  "No reminders. Log a dose from Today when you take one.": "Geen herinneringen. Sla een dosis op bij Vandaag als je er een neemt.",
+  "Every": "Elke",
+  "day(s)": "dag(en)",
+  "week(s)": "week/weken",
+  "Weekdays": "Weekdagen",
+  "Times a day": "Keer per dag",
+  "Once": "E\u00e9n keer",
+  "Twice": "Twee keer",
+  "At": "Om",
+  "Time {n}": "Tijd {n}",
+  "Remove this time": "Deze tijd verwijderen",
+  "Starts": "Begint",
+  "Ends": "Eindigt",
+  "Never": "Nooit",
+  "On a date": "Op een datum",
+  "Last day": "Laatste dag",
+  "Also say it on the Echo when I'm home": "Ook omroepen op de Echo als ik thuis ben",
+  "Recent doses": "Recente doses",
+  "{t} dose": "dosis van {t}",
+  "Workout tracker": "Trainingslogboek",
+  "Workout": "Training",
+  "Overview": "Overzicht",
+  "Meds": "Medicijnen",
+  "Language": "Taal",
+  "Automatic": "Automatisch",
+  "Whose workouts": "Wiens trainingen",
+  "you": "jij",
+  "Logged warm-up {r} \u00d7 {w} kg": "Warming-up {r} \u00d7 {w} kg opgeslagen",
+  "Logged {r} \u00d7 {w} kg": "{r} \u00d7 {w} kg opgeslagen",
+  "Use RPE {r} for today's sets without one": "RPE {r} gebruiken voor sets van vandaag zonder RPE",
+  "Use RPE {r} for all of today's sets": "RPE {r} gebruiken voor alle sets van vandaag",
+  "1 workout and {s} sets this month. Tap a day to see or change it.": "1 training en {s} sets deze maand. Tik op een dag om die te bekijken of te wijzigen.",
+  "{n} workouts and {s} sets this month. Tap a day to see or change it.": "{n} trainingen en {s} sets deze maand. Tik op een dag om die te bekijken of te wijzigen.",
+  "1 working set": "1 werkset",
+  "{n} working sets": "{n} werksets",
+  "1 warm-up": "1 warming-up",
+  "{n} warm-ups": "{n} warming-ups",
+  "{t} over 1 visit": "{t} in 1 bezoek",
+  "{t} over {n} visits": "{t} in {n} bezoeken",
+  "a week on average (last full week)": "per week gemiddeld (laatste volle week)",
+  "a week on average (last {n} full weeks)": "per week gemiddeld (laatste {n} volle weken)",
+  "{what} up {d} over {n} sessions": "{what} {d} omhoog over {n} trainingen",
+  "{what} down {d} over {n} sessions": "{what} {d} omlaag over {n} trainingen",
+  "{s} sets in 1 workout": "{s} sets in 1 training",
+  "{s} sets in {n} workouts": "{s} sets in {n} trainingen",
+  "Every {n} weeks on {d}": "Elke {n} weken op {d}",
+  "Every week on {d}": "Elke week op {d}",
+  "Your rotation": "Je rotatie",
+  "Push / Pull / Legs": "Push / Pull / Benen",
+  "Upper / Lower": "Boven / Onder",
+  "Classic pairs": "Klassieke paren",
+  "One group a day": "E\u00e9n groep per dag",
+  "Full body": "Hele lichaam",
+  "One big group plus one add-on, whichever you trained longest ago.": "E\u00e9n grote groep plus \u00e9\u00e9n kleine, steeds degene die je het langst geleden trainde.",
+  "Muscles that work together on the same day. Good for 3 or 6 days a week.": "Spieren die samenwerken op dezelfde dag. Goed voor 3 of 6 dagen per week.",
+  "Upper body and legs in turn. Good for 4 days a week.": "Bovenlichaam en benen om en om. Goed voor 4 dagen per week.",
+  "Each big group with the small one that helps it.": "Elke grote groep met de kleine die hem helpt.",
+  "One group per session, lots of sets for it. Good for 5 or more days.": "E\u00e9n groep per training, met veel sets. Goed voor 5 of meer dagen.",
+  "A bit of everything each time. Good for 2 or 3 days a week.": "Elke keer een beetje van alles. Goed voor 2 of 3 dagen per week.",
+  "Push": "Push",
+  "Pull": "Pull",
+  "Legs": "Benen",
+  "Upper body": "Bovenlichaam",
+  "Lower body": "Onderlichaam",
+  "Chest & triceps": "Borst & triceps",
+  "Back & biceps": "Rug & biceps",
+  "Legs & abs": "Benen & buik",
+  "Shoulders & abs": "Schouders & buik",
+  "Chest": "Borst",
+  "Back": "Rug",
+  "Shoulders": "Schouders",
+  "Arms": "Armen",
+  "Full body A": "Hele lichaam A",
+  "Full body B": "Hele lichaam B",
+  "Your own": "Je eigen",
+  "Strength": "Kracht",
+  "Muscle": "Spiermassa",
+  "Endurance": "Uithoudingsvermogen",
+  "Keep each exercise's sets and reps": "Sets en herhalingen per oefening houden",
+  "Heavy, few reps": "Zwaar, weinig herhalingen",
+  "Moderate weight, 8 to 12 reps": "Gemiddeld gewicht, 8 tot 12 herhalingen",
+  "Lighter, many reps": "Lichter, veel herhalingen",
+  "Treadmill": "Loopband",
+  "Run": "Hardlopen",
+  "Walk": "Wandelen",
+  "Exercise bike": "Hometrainer",
+  "Cycling": "Fietsen",
+  "Cross trainer": "Crosstrainer",
+  "Rower": "Roeitrainer",
+  "Stair climber": "Traploper",
+  "Swim": "Zwemmen",
+  "Jump rope": "Touwtjespringen",
+  "Other": "Anders",
+  "Classic push day: these all press, so one warm-up covers them.": "Klassieke pushdag: dit zijn allemaal duwbewegingen, dus \u00e9\u00e9n warming-up dekt alles.",
+  "Chest and triceps work together: do chest first, while the triceps are fresh.": "Borst en triceps werken samen: doe eerst borst, nu de triceps nog fris zijn.",
+  "Back and biceps work together: do back first, while the biceps are fresh.": "Rug en biceps werken samen: doe eerst rug, nu de biceps nog fris zijn.",
+  "Shoulders and triceps work together: do shoulders first.": "Schouders en triceps werken samen: doe eerst schouders.",
+  "Chest and back are opposites: one rests while the other works, good for supersets.": "Borst en rug zijn tegenpolen: de een rust terwijl de ander werkt, goed voor supersets.",
+  "Biceps and triceps are opposites: good for supersets.": "Biceps en triceps zijn tegenpolen: goed voor supersets.",
+  "Legs and abs go well together.": "Benen en buik gaan goed samen.",
+  "Biceps": "Biceps",
+  "Triceps": "Triceps",
+  "Abs": "Buik",
+  "Body weight": "Lichaamsgewicht",
+  "Body fat": "Vetpercentage",
+  "Waist": "Taille",
+  "Thighs": "Dijen",
+  "Hips": "Heupen",
+  "BMI": "BMI",
+  "Waist to height": "Taille/lengte",
+  "Lean mass": "Vetvrije massa",
+  "FFMI": "FFMI",
+  "underweight range": "ondergewicht",
+  "healthy range": "gezond gewicht",
+  "overweight range": "overgewicht",
+  "obese range": "obesitas",
+  "below 0.5 is the usual target": "onder 0,5 is het gebruikelijke doel",
+  "under 0.5": "onder 0,5",
+  "lean mass for your height": "vetvrije massa voor je lengte",
+  "Heaviest weight": "Zwaarste gewicht",
+  "Best estimated max": "Beste geschatte maximum",
+  "Most reps": "Meeste herhalingen",
+  "Your tracker is still running an older": "Je tracker draait nog een oudere",
+  "Step goal must be at least 500.": "Stappendoel moet minstens 500 zijn.",
+  "Steps today": "Stappen vandaag",
+  "of {g}": "van {g}",
+  "Steps toward today's goal": "Stappen richting het doel van vandaag",
+  "Goal reached": "Doel gehaald",
+  "{m} min at the gym": "{m} min in de sportschool",
+  "{m} min, from the sets you logged": "{m} min, uit je opgeslagen sets",
+  "no gym today": "vandaag geen sportschool",
+  "Walking": "Lopen",
+  "Gym": "Sportschool",
+  "{n} steps": "{n} stappen",
+  "Active calories today": "Actieve calorie\u00ebn vandaag",
+  "Watch measured {k} kcal active today": "Horloge mat vandaag {k} actieve kcal",
+  "What you burned by moving, estimated from your weight, steps and gym time. Your resting burn isn't included.": "Wat je verbrandde door te bewegen, geschat uit je gewicht, stappen en sportschooltijd. Je verbranding in rust telt niet mee.",
+  "No data": "Geen gegevens",
+  "so far": "tot nu toe",
+  "watch: {k} kcal active": "horloge: {k} actieve kcal",
+  "goal": "doel",
+  "Steps per day, last two weeks": "Stappen per dag, afgelopen twee weken",
+  "Last 7 days: {s} steps a day on average, goal reached on {g} of {d} days": "Afgelopen 7 dagen: gemiddeld {s} stappen per dag, doel gehaald op {g} van {d} dagen",
+  "\u2248 {k} kcal a day": "\u2248 {k} kcal per dag",
+  "Your daily history builds up from today.": "Je dagelijkse geschiedenis begint vanaf vandaag.",
+  "No step counter found. Install the Home Assistant app on your phone, link your phone to your person (Settings \u2192 People), and turn on its Steps sensor.": "Geen stappenteller gevonden. Installeer de Home Assistant-app op je telefoon, koppel je telefoon aan je persoon (Instellingen \u2192 Personen) en zet de stappensensor aan.",
+  "Add your body weight in Body below for the calorie estimate.": "Vul je lichaamsgewicht in bij Lichaam hieronder voor de calorieschatting.",
+  "Add weight": "Gewicht toevoegen",
+  "Settings": "Instellingen",
+  "Step goal": "Stappendoel",
+  "Reminder at": "Herinnering om",
+  "Step reminder on": "Stappenherinnering aan",
+  "Reminder time": "Tijd van de herinnering",
+  "The reminder goes to your phone when you're below your goal at that time.": "De herinnering gaat naar je telefoon als je op dat moment onder je doel zit.",
+  "No phone found for reminders: set Notifications in the integration's settings.": "Geen telefoon gevonden voor herinneringen: stel Meldingen in bij de instellingen van de integratie.",
+  "Steps from {s}.": "Stappen van {s}.",
+  "nothing yet": "nog niets",
+  "Activity": "Activiteit",
+};
+// Server texts with numbers in them (progression advice and the like).
+const NL_RX = [
+  [new RegExp("^No history yet\\. Pick a weight you can do for (\\d+) reps with 2\u20133 left\\.$"), "Nog geen geschiedenis. Kies een gewicht waarmee je $1 herhalingen haalt met nog 2\u20133 over."],
+  [new RegExp("^Hit (\\S+)\\. Go for (\\d+) reps, or hold a light plate\\.$"), "$1 gehaald. Probeer $2 herhalingen, of pak een lichte schijf."],
+  [new RegExp("^Last time (.+) @ (\\S+) kg\\. Aim for (\\S+)\\.$"), "Vorige keer $1 @ $2 kg. Ga voor $3."],
+  [new RegExp("^Last time (\\S+)\\. Aim for (\\S+)\\.$"), "Vorige keer $1. Ga voor $2."],
+  [new RegExp("^RPE 10 two sessions running\\. Drop a step and rebuild\\.$"), "Twee keer achter elkaar RPE 10. Ga een stap terug en bouw weer op."],
+  [new RegExp("^Hit (\\S+) @ (\\S+) kg at RPE \u2264 (\\S+)\\.$"), "$1 @ $2 kg gehaald bij RPE \u2264 $3."],
+  [new RegExp("^Hit (\\S+) @ (\\S+) kg two sessions in a row\\.$"), "$1 @ $2 kg twee keer achter elkaar gehaald."],
+  [new RegExp("^(\\S+) @ (\\S+) kg was light\\. Go up to (\\S+) kg\\.$"), "$1 @ $2 kg was licht. Ga naar $3 kg."],
+  [new RegExp("^(\\S+) @ (\\S+) kg is about (\\d+) reps at (\\S+) kg\\. Use (\\S+) kg for (\\S+)\\.$"), "$1 @ $2 kg is zo'n $3 herhalingen op $4 kg. Gebruik $5 kg voor $6."],
+  [new RegExp("^Hit (\\S+) but it was hard \\(RPE (\\S+)\\)\\. Repeat until it's \u2264 8\\.$"), "$1 gehaald, maar het was zwaar (RPE $2). Herhaal tot het \u2264 8 is."],
+  [new RegExp("^Hit (\\S+)\\. Log RPE, or hit it once more, to unlock an increase\\.$"), "$1 gehaald. Vul RPE in, of haal het nog een keer, om omhoog te mogen."],
+  [new RegExp("^(.*)\\(bodyweight\\)(.*)$"), "$1(lichaamsgewicht)$2"],
+  [new RegExp("^([\\d.]+) kg fat$"), "$1 kg vet"],
+];
+/** A muscle group's name, translated ("Chest" / "Borst"). */
+const gname = (g) => L(title(g));
+const gname_ = (g) => gname(g).toLowerCase();
+
+// ---------------------------------------------------------------- plan and combinations
+const SPLIT_NAMES = {
+  rotation: "Your rotation", ppl: "Push / Pull / Legs", upper_lower: "Upper / Lower",
+  pairs: "Classic pairs", one_a_day: "One group a day", full: "Full body",
+};
+const SPLIT_ABOUT = {
+  rotation: "One big group plus one add-on, whichever you trained longest ago.",
+  ppl: "Muscles that work together on the same day. Good for 3 or 6 days a week.",
+  upper_lower: "Upper body and legs in turn. Good for 4 days a week.",
+  pairs: "Each big group with the small one that helps it.",
+  one_a_day: "One group per session, lots of sets for it. Good for 5 or more days.",
+  full: "A bit of everything each time. Good for 2 or 3 days a week.",
+};
+const DAY_NAMES = {
+  push: "Push", pull: "Pull", legs: "Legs", upper: "Upper body", lower: "Lower body",
+  chest_triceps: "Chest & triceps", back_biceps: "Back & biceps", legs_abs: "Legs & abs",
+  shoulders_abs: "Shoulders & abs", chest: "Chest", back: "Back", shoulders: "Shoulders", arms: "Arms",
+  full_a: "Full body A", full_b: "Full body B",
+};
+const GOAL_NAMES = { own: "Your own", strength: "Strength", muscle: "Muscle", endurance: "Endurance" };
+const GOAL_ABOUT = {
+  own: "Keep each exercise's sets and reps",
+  strength: "Heavy, few reps", muscle: "Moderate weight, 8 to 12 reps", endurance: "Lighter, many reps",
+};
+// big group -> smaller muscles it also works hard
+const WORKS = { chest: ["triceps", "shoulders"], shoulders: ["triceps"], back: ["biceps"] };
+const PAIR_OK = [
+  [["chest", "shoulders", "triceps"], "Classic push day: these all press, so one warm-up covers them."],
+  [["chest", "triceps"], "Chest and triceps work together: do chest first, while the triceps are fresh."],
+  [["back", "biceps"], "Back and biceps work together: do back first, while the biceps are fresh."],
+  [["shoulders", "triceps"], "Shoulders and triceps work together: do shoulders first."],
+  [["chest", "back"], "Chest and back are opposites: one rests while the other works, good for supersets."],
+  [["biceps", "triceps"], "Biceps and triceps are opposites: good for supersets."],
+  [["legs", "abs"], "Legs and abs go well together."],
+];
+
+/**
+ * Tips about today's groups: still recovering, too much in one go, or a good pairing.
+ * rows: the plan's per-group rows ({group, days, today}); planned: the selection is the plan's own day.
+ */
+function comboHints(sel, rows, mains, planned) {
+  const by = Object.fromEntries(rows.map((r) => [r.group, r]));
+  const yday = (g) => by[g] && !by[g].today && by[g].days === 1;
+  const warn = [], ok = [];
+  for (const g of sel) {
+    if (yday(g) && g !== "abs") warn.push(L("{g} trained yesterday: muscles need about 48 hours to recover.", { g: gname(g) }));
+  }
+  for (const [big, smalls] of Object.entries(WORKS)) {
+    for (const s of smalls) {
+      if (sel.includes(s) && !sel.includes(big) && yday(big) && !yday(s)) {
+        warn.push(L("{big} yesterday also worked your {small}: they may still be tired.", { big: gname(big), small: gname_(s) }));
+      }
+      if (sel.includes(big) && !sel.includes(s) && yday(s) && !yday(big)) {
+        warn.push(L("{small} trained yesterday help with {big}: expect a bit less strength.", { small: gname(s), big: gname_(big) }));
+      }
+    }
+  }
+  const bigs = sel.filter((g) => mains.includes(g));
+  if (!planned && (bigs.length >= 3 || sel.length >= 5)) {
+    warn.push(L("That's a lot for one session: the last groups will get less effort. Two or three groups works best."));
+  }
+  if (!planned && sel.includes("legs") && sel.includes("back")) {
+    warn.push(L("Legs and back both load your lower back: keep the heaviest lifts for one of them."));
+  }
+  const covered = [];
+  for (const [pair, text] of PAIR_OK) {
+    if (pair.every((g) => sel.includes(g)) && !covered.some((c) => pair.every((g) => c.includes(g)))) {
+      covered.push(pair);
+      ok.push(L(text));
+    }
+  }
+  if (!warn.length && !ok.length && sel.length && sel.every((g) => !by[g] || by[g].days == null || by[g].days >= 2 || by[g].today)) {
+    ok.push(L("Everything here is rested."));
+  }
+  return [...warn.map((t) => ({ ok: false, t })), ...ok.slice(0, 1).map((t) => ({ ok: true, t }))].slice(0, 3);
+}
+
+// ---------------------------------------------------------------- cardio
+const ACT_NAMES = {
+  treadmill: "Treadmill", run: "Run", walk: "Walk", bike: "Exercise bike", cycling: "Cycling",
+  cross: "Cross trainer", rower: "Rower", stairs: "Stair climber", swim: "Swim", rope: "Jump rope", other: "Other",
+};
+const aname = (k) => L(ACT_NAMES[k] || title(k));
+/** 6.5 (min per km) -> "6:30". */
+const pace = (p) => (p ? `${Math.floor(p)}:${String(Math.round((p % 1) * 60)).padStart(2, "0")}` : "");
+function cardioLine(c) {
+  const bits = [`${num(c.minutes)} min`];
+  if (c.distance) bits.push(`${num(c.distance)} km`);
+  if (c.pace && ["treadmill", "run", "walk"].includes(c.activity)) bits.push(`${pace(c.pace)} /km`);
+  else if (c.distance && c.minutes) bits.push(`${num(Math.round((c.distance / c.minutes) * 600) / 10)} km/h`);
+  if (c.level != null) bits.push(c.activity === "treadmill" ? L("{v}% incline", { v: num(c.level) }) : L("level {v}", { v: num(c.level) }));
+  if (c.kcal) bits.push(`${num(c.kcal)} kcal`);
+  if (c.hr) bits.push(`${num(c.hr)} bpm`);
+  return bits.join(" \u00b7 ");
+}
+
 // ---------------------------------------------------------------- data layer
 const WT = {
   bundle: null,
@@ -101,6 +736,7 @@ const WT = {
     this.listeners.forEach((fn) => { try { fn(); } catch (e) { console.error(e); } });
   },
   ensure(hass) {
+    WT_LANG.ha = hass?.locale?.language || hass?.language || WT_LANG.ha;
     if (!this.integration(hass) || !hass.connection) return;
     this.hass = hass;
     if (this.profiles === null) {
@@ -212,6 +848,14 @@ function wtOwnSelection(hass) {
 function wtMain(hass) {
   if (wtOwnSelection(hass)) return wtGet(hass, "plan").attributes.current_main || "";
   return (hass?.states["input_select.workout_main"]?.state || "").toLowerCase();
+}
+
+/** Today's groups (all of them, big groups first). */
+function wtGroups(hass) {
+  const a = wtGet(hass, "plan")?.attributes;
+  if (a && "current_groups" in a) return a.current_groups;
+  const m = wtMain(hass);
+  return [m, ...(a?.addon || []).map((r) => r.group).filter((g) => wtAddonOn(hass, g))].filter(Boolean);
 }
 
 function wtAddonOn(hass, group) {
@@ -354,7 +998,7 @@ class WorkoutCard extends HTMLElement {
   _update() {
     const hass = this._hass;
     if (!hass) return;
-    let key = ["plan", "view", "selected", "rest"].map((p) => wtGet(hass, p)?.last_updated || "-").join("|");
+    let key = ["plan", "view", "selected", "rest", "cardio"].map((p) => wtGet(hass, p)?.last_updated || "-").join("|") + WT_LANG.get();
     if (!WT.integration(hass)) {
       key += ["input_select.workout_main", "input_boolean.workout_add_biceps",
         "input_boolean.workout_add_triceps", "input_boolean.workout_add_abs"]
@@ -426,7 +1070,8 @@ class WorkoutCard extends HTMLElement {
 
     switch (act) {
       case "main":
-        if (wtOwnSelection(this._hass)) this._call("workout_select_main", { group: btn.dataset.g });
+        if (this._planAware()) this._call("workout_toggle_group", { group: btn.dataset.g });
+        else if (wtOwnSelection(this._hass)) this._call("workout_select_main", { group: btn.dataset.g });
         else this._hass.callService("input_select", "select_option", {
           entity_id: "input_select.workout_main", option: title(btn.dataset.g),
         });
@@ -440,10 +1085,75 @@ class WorkoutCard extends HTMLElement {
       case "suggest":
         this._call("workout_suggest");
         break;
+      case "plan-open":
+        this._planEdit = this._planEdit ? null : { ...(wtGet(this._hass, "plan")?.attributes.program || { split: "rotation", goal: "own" }) };
+        this._render();
+        break;
+      case "plan-split":
+        this._planEdit.split = btn.dataset.k;
+        this._render();
+        break;
+      case "plan-goal":
+        this._planEdit.goal = btn.dataset.k;
+        this._render();
+        break;
+      case "plan-save": {
+        const pe = this._planEdit;
+        this._planEdit = null;
+        this._render();
+        this._call("workout_set_program", { split: pe.split, goal: pe.goal });
+        break;
+      }
+      case "cardio-toggle":
+        this._cardioOn = !this._showCardio();
+        if (!this._cardioOn) this._cardio = null;
+        this._render();
+        break;
+      case "cardio-pick":
+        this._cardio = btn.dataset.k;
+        this._cardioForm = null;
+        this._render();
+        break;
+      case "c-step": {
+        this._readCardio();
+        const f = this._cardioForm, k = btn.dataset.f, d = Number(btn.dataset.d);
+        f[k] = Math.max(k === "level" ? -10 : 0, Math.round(((Number(f[k]) || 0) + d) * 100) / 100);
+        this._render();
+        break;
+      }
+      case "c-more":
+        this._readCardio();
+        this._cardioMore = !this._cardioMore;
+        this._render();
+        break;
+      case "c-log": {
+        this._readCardio();
+        const f = this._cardioForm;
+        if (!(Number(f.minutes) > 0)) return;
+        const data = { activity: this._cardio, minutes: Number(f.minutes) };
+        for (const k of ["distance", "level", "kcal", "hr"]) if (f[k] !== "" && f[k] != null && !isNaN(Number(f[k]))) data[k] = Number(f[k]);
+        this._busy = true;
+        this._render();
+        try {
+          await this._call("workout_log_cardio", data);
+          this._haptic("success");
+          this._flash = L("Logged {m} min {a}", { m: num(f.minutes), a: aname(this._cardio).toLowerCase() });
+          setTimeout(() => { this._flash = ""; this._render(); }, 1800);
+        } catch (err) {
+          this._flash = L("Couldn't log it: {e}", { e: err.message || err });
+        }
+        this._busy = false;
+        this._render();
+        break;
+      }
+      case "c-del":
+        if (confirm(L("Delete this cardio session?"))) this._call("workout_delete_cardio", { entry_id: Number(btn.dataset.id) });
+        break;
       case "day":
         this._call("workout_set_day", { day: btn.dataset.d });
         break;
       case "ex":
+        this._cardio = null;
         this._pendingEx = btn.dataset.name;
         this._render();
         this._call("workout_select", { exercise: btn.dataset.name });
@@ -477,10 +1187,10 @@ class WorkoutCard extends HTMLElement {
             exercise: sel.state, weight: this._w, reps: this._r, rpe: this._rpe ?? 0, warmup: !!this._warm,
           });
           this._haptic("success");
-          this._flash = `Logged ${this._warm ? "warm-up " : ""}${this._r} \u00d7 ${num(this._w)} kg`;
+          this._flash = L(this._warm ? "Logged warm-up {r} \u00d7 {w} kg" : "Logged {r} \u00d7 {w} kg", { r: this._r, w: num(this._w) });
           setTimeout(() => { this._flash = ""; this._render(); }, 1800);
         } catch (err) {
-          this._flash = `Couldn't log the set: ${err.message || err}`;
+          this._flash = L("Couldn't log the set: {e}", { e: err.message || err });
           this._haptic("failure");
         }
         this._busy = false;
@@ -518,7 +1228,7 @@ class WorkoutCard extends HTMLElement {
         this._call("workout_gym_start");
         break;
       case "gym-end":
-        if (confirm("End this gym visit now?")) this._call("workout_gym_end");
+        if (confirm(L("End this gym visit now?"))) this._call("workout_gym_end");
         break;
       case "rpeall":
         if (this._rpe) this._call("workout_rpe_all", { exercise: sel.state, rpe: this._rpe });
@@ -531,14 +1241,14 @@ class WorkoutCard extends HTMLElement {
         this._readInputs();
         const name = this._newName.trim();
         if (!name) {
-          this._flashAdd = "Type a name first.";
+          this._flashAdd = L("Type a name first.");
           this._render();
           return;
         }
         const data = { name, group: this._newGroup, step: Number(this._newStep) };
         if (this._newDemo) data.demo = this._newDemo;
         await this._call("workout_add_exercise", data);
-        this._flashAdd = `Added ${name}.`;
+        this._flashAdd = L("Added {name}.", { name });
         this._newName = "";
         this._newDemo = null;
         this._render();
@@ -554,7 +1264,7 @@ class WorkoutCard extends HTMLElement {
         this._openPicker("demo", sel?.attributes.group || "");
         break;
       case "demo-remove":
-        if (sel && confirm(`Remove the demo from ${sel.state}?`)) {
+        if (sel && confirm(L("Remove the demo from {ex}?", { ex: sel.state }))) {
           this._demoOpen = false;
           this._call("workout_set_demo", { exercise: sel.state, demo: "" });
         }
@@ -621,7 +1331,7 @@ class WorkoutCard extends HTMLElement {
         this._render();
         break;
       case "hide":
-        if (sel && confirm(`Hide ${sel.state}? Its history is kept, and adding it again with the same name brings it back.`)) {
+        if (sel && confirm(L("Hide {ex}? Its history is kept, and adding it again with the same name brings it back.", { ex: sel.state }))) {
           this._call("workout_hide_exercise", { exercise: sel.state });
         }
         break;
@@ -644,6 +1354,7 @@ class WorkoutCard extends HTMLElement {
     if (t.id === "new-group") this._newGroup = t.value;
     if (t.id === "new-step") this._newStep = t.value;
     if (t.id === "w" || t.id === "r") this._readInputs();
+    if (t.dataset?.cf) this._readCardio();
   }
 
   _openPicker(mode, group) {
@@ -663,6 +1374,26 @@ class WorkoutCard extends HTMLElement {
     return [...(p.main || []), ...(p.addon || [])].map((r) => r.group);
   }
 
+  /** The page knows about plans (integration 1.5+). */
+  _planAware() {
+    return "current_groups" in (wtGet(this._hass, "plan")?.attributes || {});
+  }
+
+  _showCardio() {
+    const c = wtGet(this._hass, "cardio");
+    if (!c || !c.attributes.activities) return false;
+    return this._cardioOn ?? (c.attributes.today || []).length > 0;
+  }
+
+  _readCardio() {
+    const f = this._cardioForm;
+    if (!f) return;
+    this.shadowRoot.querySelectorAll("[data-cf]").forEach((i) => {
+      const v = i.value.replace(",", ".");
+      f[i.dataset.cf] = v === "" ? "" : isNaN(Number(v)) ? f[i.dataset.cf] : Number(v);
+    });
+  }
+
   _readInputs() {
     const w = this.shadowRoot.getElementById("w");
     const r = this.shadowRoot.getElementById("r");
@@ -679,7 +1410,7 @@ class WorkoutCard extends HTMLElement {
 
     if (!plan || !view) {
       wtBody(this, CSS).innerHTML = `<div class="wc empty card">
-        <p class="big">${WT.integration(this._hass) ? "Loading\u2026" : "Waiting for the tracker"}</p>
+        <p class="big">${WT.integration(this._hass) ? L("Loading\u2026") : "Waiting for the tracker"}</p>
         <p>The workout entities don't exist yet. Check that Pyscript is installed with
         "Allow all imports" on, then look in Settings \u2192 System \u2192 Logs for <code>pyscript</code>.</p>
       </div>`;
@@ -696,7 +1427,8 @@ class WorkoutCard extends HTMLElement {
           ${this._renderExercises(view, sel)}
         </div>
         <div class="card col-b">
-          ${sel && sel.state !== "none" ? this._renderLog(sel) + this._renderHistory(sel) : `<p class="hint">Pick an exercise to start logging.</p>`}
+          ${this._cardio && this._showCardio() ? this._renderCardio()
+            : sel && sel.state !== "none" ? this._renderLog(sel) + this._renderHistory(sel) : `<p class="hint">${L("Pick an exercise to start logging.")}</p>`}
         </div>
         <div class="card col-c">${this._renderManage(plan, sel)}</div>
       </div></div>`;
@@ -742,7 +1474,7 @@ class WorkoutCard extends HTMLElement {
     box.querySelector(".rest-bar i").style.transform = `scaleX(${Math.max(0, Math.min(1, left / total))})`;
     if (left <= 0 && !box.classList.contains("over")) {
       box.classList.add("over");
-      box.querySelector(".rest-lbl").textContent = "Rest over";
+      box.querySelector(".rest-lbl").textContent = L("Rest over");
       this._buzz(a.started);
     }
   }
@@ -771,7 +1503,7 @@ class WorkoutCard extends HTMLElement {
       return `<div class="rest on over" role="status">
         <div class="rest-row">
           <span class="rest-time">Go</span>
-          <span class="rest-lbl">Rest over: time for the next set</span>
+          <span class="rest-lbl">${L("Rest over: time for the next set")}</span>
           <button class="chip" data-action="rest-dismiss">OK</button>
         </div>
       </div>`;
@@ -781,23 +1513,23 @@ class WorkoutCard extends HTMLElement {
         <div class="rest-bar"><i></i></div>
         <div class="rest-row">
           <span class="rest-time">${mmss((a.ends - Date.now()) / 1000)}</span>
-          <span class="rest-lbl">Rest${a.exercise && a.exercise !== sel.state ? ` after ${esc(a.exercise)}` : ""}</span>
+          <span class="rest-lbl">${a.exercise && a.exercise !== sel.state ? L("Rest after {ex}", { ex: esc(a.exercise) }) : L("Rest")}</span>
           <button class="chip" data-action="rest-add" data-s="-15" aria-label="15 seconds less">\u221215</button>
           <button class="chip" data-action="rest-add" data-s="15" aria-label="15 seconds more">+15</button>
-          <button class="chip" data-action="rest-stop">Skip</button>
+          <button class="chip" data-action="rest-stop">${L("Skip")}</button>
         </div>
       </div>`;
     }
     const len = a.seconds ? mmss(a.seconds) : "off";
     const menu = this._restMenu ? `<div class="rest-menu">
-        <div class="rest-opts" role="group" aria-label="Rest between sets">
-          ${REST_CHOICES.map((v) => `<button class="chip ${v === a.seconds ? "on" : ""}" data-action="rest-set" data-s="${v}" aria-pressed="${v === a.seconds}">${v ? mmss(v) : "Off"}</button>`).join("")}
+        <div class="rest-opts" role="group" aria-label="${L("Rest between sets")}">
+          ${REST_CHOICES.map((v) => `<button class="chip ${v === a.seconds ? "on" : ""}" data-action="rest-set" data-s="${v}" aria-pressed="${v === a.seconds}">${v ? mmss(v) : L("Off")}</button>`).join("")}
         </div>
-        ${a.phone ? `<button class="chip ${a.notify ? "on" : ""}" data-action="rest-notify" aria-pressed="${!!a.notify}">Phone alert when rest is over</button>` : ""}
-        <button class="link" data-action="rest-start">Start a rest now</button>
+        ${a.phone ? `<button class="chip ${a.notify ? "on" : ""}" data-action="rest-notify" aria-pressed="${!!a.notify}">${L("Phone alert when rest is over")}</button>` : ""}
+        <button class="link" data-action="rest-start">${L("Start a rest now")}</button>
       </div>` : "";
     return `<div class="rest">
-      <button class="link quiet" data-action="rest-menu" aria-expanded="${this._restMenu}">Rest timer: ${len}${a.seconds ? " after each set" : ""}</button>
+      <button class="link quiet" data-action="rest-menu" aria-expanded="${this._restMenu}">${a.seconds ? L("Rest timer: {t} after each set", { t: len }) : L("Rest timer: off")}</button>
       ${menu}
     </div>`;
   }
@@ -807,10 +1539,10 @@ class WorkoutCard extends HTMLElement {
     if (!WT.integration(this._hass)) return "";
     const id = sel.attributes.demo;
     if (!id) {
-      return `<button class="demo-thumb none" data-action="demo-change" aria-label="Add a demo picture">+ demo</button>`;
+      return `<button class="demo-thumb none" data-action="demo-change" aria-label="${L("Add a demo picture")}">+ demo</button>`;
     }
     return `<button class="demo-thumb ${this._demoOpen ? "open" : ""}" data-action="demo-toggle"
-      aria-expanded="${this._demoOpen}" aria-label="${this._demoOpen ? "Hide" : "Show"} how to do it">${demoAnim(id)}</button>`;
+      aria-expanded="${this._demoOpen}" aria-label="${this._demoOpen ? L("Hide how to do it") : L("Show how to do it")}">${demoAnim(id)}</button>`;
   }
 
   _renderDemoPanel(sel) {
@@ -818,16 +1550,16 @@ class WorkoutCard extends HTMLElement {
     const id = sel.attributes.demo;
     if (!this._demoOpen || !id) return "";
     const x = LIB.byId?.get(id);
-    const muscles = x ? [x.m.map(title).join(", "), x.s.length ? `also ${x.s.join(", ")}` : ""].filter(Boolean).join(" \u00b7 ") : "";
+    const muscles = x ? [x.m.map(title).join(", "), x.s.length ? L("also {m}", { m: x.s.join(", ") }) : ""].filter(Boolean).join(" \u00b7 ") : "";
     return `<div class="demo-panel">
       ${demoAnim(id, "big")}
       ${x ? `<p class="demo-meta"><b>${esc(x.n)}</b><span>${esc(muscles)}${x.e ? ` \u00b7 ${esc(x.e)}` : ""}</span></p>
         <ol class="howto">${x.i.map((t) => `<li>${esc(t)}</li>`).join("")}</ol>`
-        : `<p class="hint">Loading the instructions\u2026</p>`}
+        : `<p class="hint">${L("Loading the instructions\u2026")}</p>`}
       <div class="demo-tools">
-        <button class="link" data-action="demo-change">Pick a different demo</button>
-        <button class="link quiet" data-action="demo-remove">Remove</button>
-        <button class="link quiet" data-action="demo-toggle">Close</button>
+        <button class="link" data-action="demo-change">${L("Pick a different demo")}</button>
+        <button class="link quiet" data-action="demo-remove">${L("Remove")}</button>
+        <button class="link quiet" data-action="demo-toggle">${L("Close")}</button>
       </div>
     </div>`;
   }
@@ -837,25 +1569,25 @@ class WorkoutCard extends HTMLElement {
     const groups = this._groupList();
     const sel = this._st("pyscript.workout_selected");
     const head = pk.mode === "demo"
-      ? `Demo for <b>${esc(sel?.state || "")}</b>`
-      : "Find an exercise in the library";
+      ? L("Demo for {ex}", { ex: `<b>${esc(sel?.state || "")}</b>` })
+      : L("Find an exercise in the library");
     return `<div class="picker">
       <p class="picker-head">${head}</p>
-      <input id="lib-q" type="search" value="${esc(pk.q)}" placeholder="Search ${LIB.list ? LIB.list.length : ""} exercises, e.g. cable fly" autocomplete="off" enterkeyhint="search">
+      <input id="lib-q" type="search" value="${esc(pk.q)}" placeholder="${L("Search {n} exercises, e.g. cable fly", { n: LIB.list ? LIB.list.length : "" })}" autocomplete="off" enterkeyhint="search">
       <div class="lib-groups">
-        <button class="chip ${!pk.group ? "on" : ""}" data-action="lib-g" data-g="">All</button>
-        ${groups.map((g) => `<button class="chip ${pk.group === g ? "on" : ""}" data-action="lib-g" data-g="${esc(g)}">${esc(title(g))}</button>`).join("")}
+        <button class="chip ${!pk.group ? "on" : ""}" data-action="lib-g" data-g="">${L("All")}</button>
+        ${groups.map((g) => `<button class="chip ${pk.group === g ? "on" : ""}" data-action="lib-g" data-g="${esc(g)}">${esc(gname(g))}</button>`).join("")}
       </div>
-      <ul class="lib-list">${pk.error ? `<li class="hint">Couldn't load the library (${esc(pk.error)}).</li>` : this._libItems()}</ul>
-      <button class="link quiet" data-action="lib-close">Cancel</button>
+      <ul class="lib-list">${pk.error ? `<li class="hint">${L("Couldn't load the library ({e}).", { e: esc(pk.error) })}</li>` : this._libItems()}</ul>
+      <button class="link quiet" data-action="lib-close">${L("Cancel")}</button>
     </div>`;
   }
 
   _libItems() {
     const pk = this._picker;
-    if (!LIB.list) return `<li class="hint">Loading\u2026</li>`;
+    if (!LIB.list) return `<li class="hint">${L("Loading\u2026")}</li>`;
     const found = LIB.search(pk.q, pk.group);
-    if (!found.length) return `<li class="hint">Nothing found. Try fewer words${pk.group ? ", or All groups" : ""}.</li>`;
+    if (!found.length) return `<li class="hint">${pk.group ? L("Nothing found. Try fewer words, or All groups.") : L("Nothing found. Try fewer words.")}</li>`;
     return found.map((x) => `<li><button data-action="lib-pick" data-id="${esc(x.id)}">
         ${x.f ? `<img src="${demoSrc(x.id, 0)}" alt="" loading="lazy" decoding="async">` : `<span class="noimg"></span>`}
         <span><b>${esc(x.n)}</b><small>${esc([title(x.m[0] || ""), x.e].filter(Boolean).join(" \u00b7 "))}</small></span>
@@ -864,25 +1596,80 @@ class WorkoutCard extends HTMLElement {
 
   _renderDay(plan, view) {
     const p = plan.attributes;
-    const mainNow = wtMain(this._hass);
-    const addonsOn = (p.addon || []).filter((r) => wtAddonOn(this._hass, r.group)).map((r) => r.group);
-    const offPlan = mainNow !== p.next_main || addonsOn.length !== 1 || addonsOn[0] !== p.next_addon;
+    const sel = wtGroups(this._hass);
+    const planned = p.next_groups || [p.next_main, p.next_addon].filter(Boolean);
+    const offPlan = sel.length !== planned.length || planned.some((g) => !sel.includes(g));
+    const prog = p.program || { split: "rotation", goal: "own" };
+    const split = prog.split !== "rotation" && p.next_day;
+    const mains = (p.main || []).map((r) => r.group);
+    const cardio = wtGet(this._hass, "cardio")?.attributes;
 
     const chip = (r, kind, on) => {
-      const when = r.today ? "today" : r.days == null ? "new" : r.days === 0 ? "today" : `${r.days}d`;
-      const due = r.group === (kind === "main" ? p.next_main : p.next_addon);
+      const when = r.today ? L("today") : r.days == null ? L("new") : r.days === 0 ? L("today") : L("{n}d", { n: r.days });
+      const due = planned.includes(r.group);
       return `<button class="g ${on ? "on" : ""} ${due ? "due" : ""}" data-action="${kind}" data-g="${esc(r.group)}"
-        aria-pressed="${on}" title="${due ? "Due today" : ""}">
-        <span>${esc(title(r.group))}</span><small>${when}</small></button>`;
+        aria-pressed="${on}" title="${due ? L("Due today") : ""}">
+        <span>${esc(gname(r.group))}</span><small>${when}</small></button>`;
     };
+    const cardioChip = cardio?.activities
+      ? `<button class="g cardio ${this._showCardio() ? "on" : ""}" data-action="cardio-toggle" aria-pressed="${this._showCardio()}">
+          <span>${L("Cardio")}</span><small>${cardio.week_minutes ? L("{m} min wk", { m: cardio.week_minutes }) : L("none yet")}</small></button>`
+      : "";
+    const hints = this._planAware() ? comboHints(sel, [...(p.main || []), ...(p.addon || [])], mains, !offPlan) : [];
+    const dayName = (k) => L(DAY_NAMES[k] || title(k));
+    const planLine = this._planAware() ? `<div class="planline">
+        <span>${split ? L("{plan} \u00b7 today: {day}", { plan: L(SPLIT_NAMES[prog.split]), day: `<b>${esc(dayName(p.next_day))}</b>` })
+          : L("{plan} \u00b7 today's suggestion", { plan: L(SPLIT_NAMES.rotation) })}</span>
+        <button class="link" data-action="plan-open" aria-expanded="${!!this._planEdit}">${this._planEdit ? L("Close") : L("Change plan")}</button>
+      </div>` : "";
+    const queue = split && (p.queue || []).length > 1
+      ? `<p class="queue">${L("Then")}: ${p.queue.slice(1).map((k) => esc(dayName(k))).join(" \u2192 ")}</p>` : "";
 
     return `<header class="day">
-      <h1><span>${esc(title(mainNow) || "\u2013")}</span>${addonsOn.map((g) => `<em>+ ${esc(g)}</em>`).join("")}</h1>
-      <div class="groups mains">${(p.main || []).map((r) => chip(r, "main", r.group === mainNow)).join("")}</div>
-      <div class="groups addons">${(p.addon || []).map((r) => chip(r, "addon", addonsOn.includes(r.group))).join("")}</div>
+      ${planLine}
+      ${this._planEdit ? this._renderPlanEdit(p) : ""}
+      <h1>${sel.length ? `<span>${esc(gname(sel[0]))}</span>${sel.slice(1).map((g) => `<em>+ ${esc(gname_(g))}</em>`).join("")}` : "<span>\u2013</span>"}</h1>
+      <div class="groups mains">${(p.main || []).map((r) => chip(r, "main", sel.includes(r.group))).join("")}</div>
+      <div class="groups addons ${cardioChip ? "four" : ""}">${(p.addon || []).map((r) => chip(r, "addon", sel.includes(r.group))).join("")}${cardioChip}</div>
+      ${hints.length ? `<ul class="hints">${hints.map((h) => `<li class="${h.ok ? "ok" : "warn"}">${esc(h.t)}</li>`).join("")}</ul>` : ""}
+      ${queue}
       ${this._gymLine(p)}
-      ${offPlan ? `<button class="link" data-action="suggest">Back to today's plan: ${esc(title(p.next_main))}${p.next_addon ? ` + ${esc(p.next_addon)}` : ""}</button>` : ""}
+      ${offPlan && planned.length ? `<button class="link" data-action="suggest">${L("Back to today's plan")}: ${esc(split ? dayName(p.next_day) : planned.map(gname).join(" + "))}</button>` : ""}
     </header>`;
+  }
+
+  _renderPlanEdit(p) {
+    const pe = this._planEdit;
+    const days = wtGet(this._hass, "stats")?.attributes?.target_days;
+    const splits = p.splits || {};
+    const dayName = (k) => L(DAY_NAMES[k] || title(k));
+    const rows = Object.keys(SPLIT_NAMES).filter((k) => k === "rotation" || splits[k]).map((k) => {
+      const sp = splits[k] || { fits: [], days: [] };
+      const fits = days && sp.fits.includes(days);
+      const daysTxt = sp.days.length
+        ? sp.days.map(([d, gs]) => `<span><b>${esc(dayName(d))}</b>${gs.length === 1 && gname(gs[0]) === dayName(d) ? "" : ` ${esc(gs.map(gname_).join(", "))}`}</span>`).join("")
+        : "";
+      return `<button class="split ${pe.split === k ? "on" : ""}" data-action="plan-split" data-k="${k}" aria-pressed="${pe.split === k}">
+        <span class="split-top"><b>${esc(L(SPLIT_NAMES[k]))}</b>${fits ? `<i>${L("fits your {n} days", { n: days })}</i>` : ""}</span>
+        <small>${esc(L(SPLIT_ABOUT[k]))}</small>
+        ${daysTxt ? `<span class="split-days">${daysTxt}</span>` : ""}
+      </button>`;
+    }).join("");
+    const goals = Object.keys(GOAL_NAMES).map((k) => {
+      const g = (p.goals || {})[k];
+      const sub = g ? `${g.sets}\u00d7${g.reps} \u00b7 ${mmss(g.rest)} ${L("rest")}` : L(GOAL_ABOUT.own);
+      return `<button class="goal ${pe.goal === k ? "on" : ""}" data-action="plan-goal" data-k="${k}" aria-pressed="${pe.goal === k}">
+        <b>${esc(L(GOAL_NAMES[k]))}</b><small>${esc(sub)}</small></button>`;
+    }).join("");
+    return `<div class="planbox">
+      <p class="planbox-h">${L("Training plan")}</p>
+      <p class="hint small">${L("The plan rolls on: whenever you go, the next day in line is up. Skip a day and nothing is lost.")}</p>
+      <div class="splits">${rows}</div>
+      <p class="planbox-h">${L("Goal")}</p>
+      <div class="goals">${goals}</div>
+      <div class="planbox-act"><button class="add-btn" data-action="plan-save">${L("Use this plan")}</button>
+        <button class="link quiet" data-action="plan-open">${L("Cancel")}</button></div>
+    </div>`;
   }
 
   _gymLine(p) {
@@ -891,11 +1678,11 @@ class WorkoutCard extends HTMLElement {
       const start = new Date(v.start);
       const mins = Math.max(0, Math.round((Date.now() - start.getTime()) / 60000));
       const hhmm = v.start.slice(11, 16);
-      return `<p class="gym"><i></i>At the gym since ${hhmm} \u00b7 ${mins} min
-        <button class="link quiet" data-action="gym-end">End visit</button></p>`;
+      return `<p class="gym"><i></i>${L("At the gym since {t}", { t: hhmm })} \u00b7 ${mins} min
+        <button class="link quiet" data-action="gym-end">${L("End visit")}</button></p>`;
     }
-    return `<p class="gym off">${p.gym_tracking ? "Not at the gym" : "Gym time not tracked by location"}
-      <button class="link quiet" data-action="gym-start">Start a visit</button></p>`;
+    return `<p class="gym off">${p.gym_tracking ? L("Not at the gym") : L("Gym time not tracked by location")}
+      <button class="link quiet" data-action="gym-start">${L("Start a visit")}</button></p>`;
   }
 
   _renderExercises(view, sel) {
@@ -906,7 +1693,7 @@ class WorkoutCard extends HTMLElement {
       const list = cards.filter((c) => c.group === g);
       if (!list.length) return "";
       return `<div class="ex-group">
-        <h3>${esc(title(g))}</h3>
+        <h3>${esc(gname(g))}</h3>
         <div class="ex-row">${list.map((c) => {
           const a = ACTIONS[c.suggestion.action] || ACTIONS.hold;
           const done = c.today_done;
@@ -914,7 +1701,15 @@ class WorkoutCard extends HTMLElement {
             <i class="pip ${a.cls}"></i>${esc(c.name)}${done ? `<b>${done}</b>` : ""}</button>`;
         }).join("")}</div></div>`;
     }).join("");
-    return `<nav class="exercises" aria-label="Exercises">${rows || `<p class="hint">No exercises in these groups yet. Add one under Manage exercises.</p>`}</nav>`;
+    const c = wtGet(this._hass, "cardio")?.attributes;
+    const cardioRow = this._showCardio() ? `<div class="ex-group">
+        <h3>${L("Cardio")}</h3>
+        <div class="ex-row">${c.activities.map((a) => {
+          const n = (c.today || []).filter((x) => x.activity === a.key).length;
+          return `<button class="exc ${this._cardio === a.key ? "on" : ""} ${n ? "done" : ""}" data-action="cardio-pick" data-k="${a.key}">
+            ${esc(aname(a.key))}${n ? `<b>${n}</b>` : ""}</button>`;
+        }).join("")}</div></div>` : "";
+    return `<nav class="exercises" aria-label="${L("Exercises")}">${rows || (cardioRow ? "" : `<p class="hint">${L("No exercises in these groups yet. Add one under Manage exercises.")}</p>`)}${cardioRow}</nav>`;
   }
 
   _renderLog(sel) {
@@ -928,14 +1723,14 @@ class WorkoutCard extends HTMLElement {
 
     const warmups = today.filter((t) => t.kind === "warmup");
     const work = today.filter((t) => t.kind !== "warmup");
-    const plates = warmups.map((t) => `<li class="plate warm" title="Warm-up: ${t.reps} reps \u00d7 ${num(t.weight)} kg">
+    const plates = warmups.map((t) => `<li class="plate warm" title="${L("Warm-up: {r} reps \u00d7 {w} kg", { r: t.reps, w: num(t.weight) })}">
         <b>W</b><small>${t.reps}\u00d7${t.weight ? num(t.weight) : "bw"}</small></li>`);
     for (let i = 0; i < Math.max(target, work.length); i++) {
       const t = work[i];
       plates.push(t
-        ? `<li class="plate filled" title="${t.reps} reps \u00d7 ${num(t.weight)} kg${t.rpe ? `, RPE ${num(t.rpe)}` : ""}">
+        ? `<li class="plate filled" title="${L("{r} reps \u00d7 {w} kg", { r: t.reps, w: num(t.weight) })}${t.rpe ? `, RPE ${num(t.rpe)}` : ""}">
              <b>${t.reps}</b><small>${t.weight ? num(t.weight) : "bw"}${t.rpe ? ` @${num(t.rpe)}` : ""}</small></li>`
-        : `<li class="plate" aria-label="Set ${i + 1} to do"><small>${i + 1}</small></li>`);
+        : `<li class="plate" aria-label="${L("Set {n} to do", { n: i + 1 })}"><small>${i + 1}</small></li>`);
     }
     const nextWork = work.length + 1;
 
@@ -944,9 +1739,9 @@ class WorkoutCard extends HTMLElement {
     const pr = a.pr;
     const prBanner = pr && String(pr.set_id) !== String(this._prSeen) && pr.day === (a.log_day || localISO(0))
       ? `<div class="pr" role="status">
-          <div><strong>New record</strong>
-          ${pr.records.map((r) => `<span>${esc(r.label)}: <b>${num(r.value)}${r.type === "reps" ? " reps" : " kg"}</b> <small>(was ${num(r.previous)})</small></span>`).join("")}</div>
-          <button class="link" data-action="pr-ok" data-id="${pr.set_id}">Nice</button>
+          <div><strong>${L("New record")}</strong>
+          ${pr.records.map((r) => `<span>${esc(L(r.label))}: <b>${num(r.value)}${r.type === "reps" ? ` ${L("reps")}` : " kg"}</b> <small>(${L("was {v}", { v: num(r.previous) })})</small></span>`).join("")}</div>
+          <button class="link" data-action="pr-ok" data-id="${pr.set_id}">${L("Nice")}</button>
         </div>`
       : "";
     if (prBanner && this._prHaptic !== pr.set_id) { this._prHaptic = pr.set_id; this._haptic("heavy"); }
@@ -954,18 +1749,18 @@ class WorkoutCard extends HTMLElement {
     const note = a.note || "";
     const noteBlock = this._noteEdit
       ? `<div class="note edit">
-          <textarea id="note-in" rows="2" maxlength="500" placeholder="Seat height, grip, which machine\u2026">${esc(note)}</textarea>
-          <div><button class="link" data-action="note-save">Save note</button><button class="link quiet" data-action="note-cancel">Cancel</button></div>
+          <textarea id="note-in" rows="2" maxlength="500" placeholder="${L("Seat height, grip, which machine\u2026")}">${esc(note)}</textarea>
+          <div><button class="link" data-action="note-save">${L("Save note")}</button><button class="link quiet" data-action="note-cancel">${L("Cancel")}</button></div>
         </div>`
       : note
-        ? `<button class="note" data-action="note-edit" aria-label="Edit note"><span>${esc(note)}</span></button>`
-        : `<button class="note empty" data-action="note-edit">Add a note (seat height, grip\u2026)</button>`;
+        ? `<button class="note" data-action="note-edit" aria-label="${L("Edit note")}"><span>${esc(note)}</span></button>`
+        : `<button class="note empty" data-action="note-edit">${L("Add a note (seat height, grip\u2026)")}</button>`;
 
     const logDay = a.log_day || null;
     const yest = localISO(-1);
     const dayPicker = logDay
-      ? `<div class="logday past"><p><strong>Logging for ${esc(fmtDayLong(logDay))}</strong><span>Sets you log now are saved to that day.</span></p>
-           <button class="link" data-action="day" data-d="today">Back to today</button></div>`
+      ? `<div class="logday past"><p><strong>${L("Logging for {d}", { d: esc(fmtDayLong(logDay)) })}</strong><span>${L("Sets you log now are saved to that day.")}</span></p>
+           <button class="link" data-action="day" data-d="today">${L("Back to today")}</button></div>`
       : "";
     return `<section class="log">
       ${dayPicker}
@@ -975,45 +1770,93 @@ class WorkoutCard extends HTMLElement {
       ${noteBlock}
       <p class="advice ${act.cls}">
         <strong>${esc(s.action === "start" && !s.weight ? act.verb(0) : act.verb(num(s.weight)))}</strong>
-        <span class="for">for ${esc(s.reps ?? 15)} reps</span>
-        <span class="why">${esc(s.reason || "")}</span>
+        <span class="for">${L("for {n} reps", { n: esc(s.reps ?? 15) })}</span>
+        <span class="why">${esc(L(s.reason || ""))}</span>
       </p>
 
       <div class="steppers">
         <div class="stepper">
-          <button data-action="w-" aria-label="Less weight">\u2212</button>
-          <label><input id="w" inputmode="decimal" value="${esc(num(this._w))}" aria-label="Weight in kg"><span>${bw ? "kg \u00b7 bodyweight" : "kg"}</span></label>
-          <button data-action="w+" aria-label="More weight">+</button>
+          <button data-action="w-" aria-label="${L("Less weight")}">\u2212</button>
+          <label><input id="w" inputmode="decimal" value="${esc(num(this._w))}" aria-label="${L("Weight in kg")}"><span>${bw ? L("kg \u00b7 bodyweight") : "kg"}</span></label>
+          <button data-action="w+" aria-label="${L("More weight")}">+</button>
         </div>
         <div class="stepper reps">
-          <button data-action="r-" aria-label="Fewer reps">\u2212</button>
-          <label><input id="r" inputmode="numeric" value="${esc(this._r)}" aria-label="Reps"><span>reps</span></label>
-          <button data-action="r+" aria-label="More reps">+</button>
+          <button data-action="r-" aria-label="${L("Fewer reps")}">\u2212</button>
+          <label><input id="r" inputmode="numeric" value="${esc(this._r)}" aria-label="${L("Reps")}"><span>${L("reps")}</span></label>
+          <button data-action="r+" aria-label="${L("More reps")}">+</button>
         </div>
       </div>
 
       <div class="setkind">
-        <button class="chip ${this._warm ? "on" : ""}" data-action="warm" aria-pressed="${!!this._warm}">Warm-up set</button>
-        <span>${this._warm ? "Not counted in advice, records or set totals" : ""}</span>
+        <button class="chip ${this._warm ? "on" : ""}" data-action="warm" aria-pressed="${!!this._warm}">${L("Warm-up set")}</button>
+        <span>${this._warm ? L("Not counted in advice, records or set totals") : ""}</span>
       </div>
 
-      <div class="rpe" role="group" aria-label="How hard was it (RPE)">
-        <span>How hard?</span>
+      <div class="rpe" role="group" aria-label="${L("How hard was it (RPE)")}">
+        <span>${L("How hard?")}</span>
         ${RPES.map((v) => `<button class="${this._rpe === v ? "on" : ""}" data-action="rpe" data-v="${v}" aria-pressed="${this._rpe === v}">${v}</button>`).join("")}
       </div>
 
-      <button class="log-btn ${this._flash && !this._flash.startsWith("Couldn") ? "ok" : ""}" data-action="log" ${this._busy ? "disabled" : ""}>
-        ${this._flash ? esc(this._flash) : this._warm ? "Log warm-up" : `Log set ${nextWork}`}
+      <button class="log-btn ${this._flash && !this._flash.startsWith(L("Couldn't log the set: {e}", { e: "" })) ? "ok" : ""}" data-action="log" ${this._busy ? "disabled" : ""}>
+        ${this._flash ? esc(this._flash) : this._warm ? L("Log warm-up") : L("Log set {n}", { n: nextWork })}
       </button>
       ${this._renderRest(sel)}
 
       <div class="sets">
         <ol class="plates">${plates.join("")}</ol>
         <div class="set-tools">
-          ${this._rpe && work.length ? `<button class="link" data-action="rpeall">Use RPE ${this._rpe} for ${missingRpe ? "today's sets without one" : "all of today's sets"}</button>` : ""}
-          ${today.length ? `<button class="link quiet" data-action="undo">Undo last set</button>` : ""}
+          ${this._rpe && work.length ? `<button class="link" data-action="rpeall">${L(missingRpe ? "Use RPE {r} for today's sets without one" : "Use RPE {r} for all of today's sets", { r: this._rpe })}</button>` : ""}
+          ${today.length ? `<button class="link quiet" data-action="undo">${L("Undo last set")}</button>` : ""}
         </div>
       </div>
+    </section>`;
+  }
+
+  _renderCardio() {
+    const c = wtGet(this._hass, "cardio").attributes;
+    const key = this._cardio;
+    const act = c.activities.find((a) => a.key === key) || { key, distance: false, level: null };
+    const last = (c.last || {})[key];
+    if (!this._cardioForm) {
+      this._cardioForm = {
+        minutes: last ? last.minutes : 20, distance: last?.distance ?? "", level: last?.level ?? "", kcal: "", hr: "",
+      };
+    }
+    const f = this._cardioForm;
+    const step = (field, label, d, unit, mode = "decimal") => `<div class="stepper">
+        <button data-action="c-step" data-f="${field}" data-d="${-d}" aria-label="${L("Less")}">\u2212</button>
+        <label><input data-cf="${field}" inputmode="${mode}" value="${esc(num(f[field]))}" aria-label="${esc(label)}"><span>${esc(unit)}</span></label>
+        <button data-action="c-step" data-f="${field}" data-d="${d}" aria-label="${L("More")}">+</button>
+      </div>`;
+    const levelLbl = key === "treadmill" ? L("% incline") : L("level");
+    const today = (c.today || []);
+    const pct = Math.min(100, Math.round((c.week_minutes / (c.target || 150)) * 100));
+    return `<section class="log cardio">
+      <div class="exhead"><h2>${esc(aname(key))}</h2></div>
+      <p class="advice ${last ? "stay" : "new"}">
+        ${last ? `<strong>${L("Last time")}</strong> <span class="for">${esc(fmtDayLong(last.day))}</span>
+          <span class="why">${esc(cardioLine({ ...last, activity: key }))}</span>`
+          : `<strong>${L("First time")}</strong><span class="why">${L("Log how long you did it; distance and the rest are optional.")}</span>`}
+      </p>
+      <div class="steppers ${act.distance ? "" : "one"}">
+        ${step("minutes", L("Minutes"), 5, "min", "numeric")}
+        ${act.distance ? step("distance", L("Distance"), key === "swim" ? 0.1 : 0.5, "km") : ""}
+      </div>
+      ${act.level ? `<div class="steppers one">${step("level", levelLbl, key === "treadmill" ? 0.5 : 1, levelLbl)}</div>` : ""}
+      <button class="link quiet" data-action="c-more" aria-expanded="${!!this._cardioMore}">${this._cardioMore ? L("Fewer details") : L("Calories and heart rate")}</button>
+      ${this._cardioMore ? `<div class="form cform">
+        <label>${L("Calories")}<input data-cf="kcal" inputmode="numeric" value="${esc(f.kcal)}" placeholder="${L("kcal")}"></label>
+        <label>${L("Average heart rate")}<input data-cf="hr" inputmode="numeric" value="${esc(f.hr)}" placeholder="${L("bpm")}"></label>
+      </div>` : ""}
+      <button class="log-btn ${this._flash && !this._flash.startsWith(L("Couldn't log it: {e}", { e: "" })) ? "ok" : ""}" data-action="c-log" ${this._busy ? "disabled" : ""}>
+        ${this._flash ? esc(this._flash) : L("Log {m} min", { m: num(f.minutes) || 0 })}
+      </button>
+      <div class="cweek">
+        <div class="cweek-top"><b>${c.week_minutes}</b><span>${L("of {t} min cardio this week", { t: c.target || 150 })}</span></div>
+        <div class="rest-bar"><i style="transform:scaleX(${pct / 100})"></i></div>
+      </div>
+      ${today.length ? `<ul class="ctoday">${today.map((x) => `<li><span><b>${esc(aname(x.activity))}</b> ${esc(cardioLine(x))}</span>
+          <button class="link quiet" data-action="c-del" data-id="${x.id}" aria-label="${L("Delete")}">\u2715</button></li>`).join("")}</ul>` : ""}
     </section>`;
   }
 
@@ -1022,7 +1865,7 @@ class WorkoutCard extends HTMLElement {
     const series = a.series || [];
     const hist = a.history || [];
     if (!hist.length) {
-      return `<section class="hist"><p class="hint">No history yet for ${esc(sel.state)}. Your first logged session sets the baseline.</p></section>`;
+      return `<section class="hist"><p class="hint">${L("No history yet for {ex}. Your first logged session sets the baseline.", { ex: esc(sel.state) })}</p></section>`;
     }
     let spark = "";
     if (series.length >= 2) {
@@ -1031,21 +1874,21 @@ class WorkoutCard extends HTMLElement {
       const x = (i) => pad + (i * (W - 2 * pad)) / (vals.length - 1);
       const y = (v) => (hi === lo ? H / 2 : H - pad - ((v - lo) * (H - 2 * pad)) / (hi - lo));
       const pts = vals.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
-      spark = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Estimated max over the last ${vals.length} sessions">
+      spark = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${L("Estimated max over the last {n} sessions", { n: vals.length })}">
         <polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
         <circle cx="${x(vals.length - 1)}" cy="${y(vals[vals.length - 1])}" r="3.5" class="last"/></svg>`;
     }
     const tr = a.trend;
-    const trTxt = tr == null ? "" : `<span class="${tr > 0 ? "pos" : tr < 0 ? "neg" : ""}">${tr > 0 ? "+" : ""}${tr}% vs last session</span>`;
+    const trTxt = tr == null ? "" : `<span class="${tr > 0 ? "pos" : tr < 0 ? "neg" : ""}">${L("{p}% vs last session", { p: (tr > 0 ? "+" : "") + tr })}</span>`;
 
     return `<section class="hist">
       <div class="trend">
-        <div><b>${num(a.strength)} kg</b><span>estimated max</span>${trTxt}</div>
+        <div><b>${num(a.strength)} kg</b><span>${L("estimated max")}</span>${trTxt}</div>
         ${spark}
       </div>
       <ol class="sessions">${hist.map((h) => {
         const i = h.indexOf(" \u00b7 ");
-        return `<li><time>${esc(i > 0 ? h.slice(0, i) : "")}</time><span>${esc(i > 0 ? h.slice(i + 3) : h)}</span></li>`;
+        return `<li><time>${esc(i > 0 ? trDate(h.slice(0, i)) : "")}</time><span>${esc(L(i > 0 ? h.slice(i + 3) : h))}</span></li>`;
       }).join("")}</ol>
     </section>`;
   }
@@ -1058,21 +1901,21 @@ class WorkoutCard extends HTMLElement {
     if (!steps.includes(this._newStep)) steps.push(this._newStep);
     const lib = WT.integration(this._hass);
     const picked = this._newDemo
-      ? `<div class="picked">${demoAnim(this._newDemo, "mini")}<span>Demo from the library</span>
-           <button class="link quiet" data-action="new-demo-clear">Remove</button></div>` : "";
+      ? `<div class="picked">${demoAnim(this._newDemo, "mini")}<span>${L("Demo from the library")}</span>
+           <button class="link quiet" data-action="new-demo-clear">${L("Remove")}</button></div>` : "";
     return `<details class="manage" ${this._manageOpen ? "open" : ""}>
-      <summary>Manage exercises</summary>
+      <summary>${L("Manage exercises")}</summary>
       ${lib && this._picker?.mode === "add" ? this._renderPicker()
-        : lib ? `<button class="lib-btn" data-action="lib-open">Search the exercise library</button>` : ""}
+        : lib ? `<button class="lib-btn" data-action="lib-open">${L("Search the exercise library")}</button>` : ""}
       ${picked}
       <div class="form">
-        <label class="f-name">Name<input id="new-name" value="${esc(this._newName)}" placeholder="e.g. Cable fly" autocomplete="off"></label>
-        <label>Muscle group<select id="new-group">${groups.map((g) => `<option value="${esc(g)}" ${g === this._newGroup ? "selected" : ""}>${esc(title(g))}</option>`).join("")}</select></label>
-        <label>Weight step<select id="new-step">${steps.map((s) => `<option value="${s}" ${s === this._newStep ? "selected" : ""}>${s} kg</option>`).join("")}</select></label>
-        <button class="add-btn" data-action="add">Add exercise</button>
+        <label class="f-name">${L("Name")}<input id="new-name" value="${esc(this._newName)}" placeholder="${L("e.g. Cable fly")}" autocomplete="off"></label>
+        <label>${L("Muscle group")}<select id="new-group">${groups.map((g) => `<option value="${esc(g)}" ${g === this._newGroup ? "selected" : ""}>${esc(gname(g))}</option>`).join("")}</select></label>
+        <label>${L("Weight step")}<select id="new-step">${steps.map((s) => `<option value="${s}" ${s === this._newStep ? "selected" : ""}>${s} kg</option>`).join("")}</select></label>
+        <button class="add-btn" data-action="add">${L("Add exercise")}</button>
       </div>
       ${this._flashAdd ? `<p class="hint">${esc(this._flashAdd)}</p>` : ""}
-      ${sel && sel.state !== "none" ? `<button class="link quiet" data-action="hide">Hide ${esc(sel.state)} from the lists</button>` : ""}
+      ${sel && sel.state !== "none" ? `<button class="link quiet" data-action="hide">${L("Hide {ex} from the lists", { ex: esc(sel.state) })}</button>` : ""}
     </details>`;
   }
 }
@@ -1408,6 +2251,56 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 .rest.on .chip { background: var(--surface); }
 .picker .chip { background: var(--surface); }
 .rest.on.over .rest-time { color: var(--presence); }
+
+/* ---- plan, hints, cardio ---- */
+.planline { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: -6px 0 6px; font-size: 13px; color: var(--muted); }
+.planline b { color: var(--lamp); font-weight: 600; }
+.planline .link { padding: 4px 0; flex: none; }
+.planbox { margin: 4px 0 16px; padding: 14px; border-radius: var(--r-md); background: var(--surface-2); }
+.planbox-h { margin: 0 0 6px; font: 600 15px/1.2 var(--display); }
+.planbox-h + .hint.small, .hint.small { font-size: 13px; margin: 0 0 10px; }
+.splits { display: grid; gap: 6px; margin-bottom: 14px; }
+@container (min-width: 560px) { .splits { grid-template-columns: 1fr 1fr; } }
+.split, .goal { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; text-align: left; padding: 10px 12px;
+  border-radius: var(--r-sm); border: 1px solid transparent; background: var(--surface); color: var(--text); }
+.split.on, .goal.on { border-color: var(--lamp); background: var(--lamp-soft); }
+.split-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; width: 100%; }
+.split-top i { font-style: normal; font-size: 11px; color: var(--presence); white-space: nowrap; }
+.split small, .goal small { color: var(--muted); font-size: 12px; }
+.split-days { display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: 12px; color: var(--muted); }
+.split-days b { color: var(--text); font-weight: 500; }
+.goals { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.planbox-act { display: flex; align-items: center; gap: 16px; margin-top: 12px; }
+.planbox-act .add-btn { flex: 1; background: var(--lamp); color: #1b1406; border-color: var(--lamp); }
+.hints { list-style: none; margin: 8px 0 2px; padding: 0; display: grid; gap: 4px; }
+.hints li { position: relative; padding: 0 0 0 16px; font-size: 13px; color: var(--muted); line-height: 1.35; }
+.hints li::before { content: ""; position: absolute; left: 2px; top: .45em; width: 7px; height: 7px; border-radius: 50%; }
+.hints li.warn::before { background: var(--lamp); }
+.hints li.warn { color: var(--text); }
+.hints li.ok::before { background: var(--presence); }
+.queue { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
+.addons.four { grid-template-columns: repeat(4, 1fr); }
+.g.cardio { border-style: dashed; border-color: #3b4657; }
+.g.cardio.on { border-style: solid; border-color: var(--presence); background: rgba(92,200,180,.14); }
+.g.cardio.on small { color: var(--presence); }
+.steppers.one { grid-template-columns: 1fr; margin-top: 10px; }
+.cardio .log-btn { margin-top: 12px; }
+.cardio .stepper input { font-size: 38px; }
+.cardio .stepper > button { width: 38px; }
+.cardio > .link { font-size: 13px; padding: 10px 0 0; }
+.cform { margin: 8px 0 0; }
+.cform label { min-width: 0; }
+.cform input { min-width: 0; width: 100%; }
+.cweek { margin: 16px 0 6px; }
+.cweek-top { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.cweek-top b { font: 600 24px/1 var(--display); }
+.cweek-top span { font-size: 13px; color: var(--muted); }
+.cweek .rest-bar i { background: var(--presence); }
+.ctoday { list-style: none; margin: 10px 0 4px; padding: 0; }
+.ctoday li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 0; font-size: 14px; }
+.ctoday li + li { border-top: 1px solid var(--line); }
+.ctoday span { color: var(--muted); }
+.ctoday b { color: var(--text); font-weight: 500; margin-right: 4px; }
 `;
 
 if (!customElements.get("workout-card")) customElements.define("workout-card", WorkoutCard);
@@ -1441,8 +2334,16 @@ const CATS = {
 const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const pd = (s) => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
-const fmtDay = (s) => { const d = pd(s); return `${d.getDate()} ${MONTHS[d.getMonth()]}`; };
-const fmtDayLong = (s) => { const d = pd(s); return `${DOW[(d.getDay() + 6) % 7]} ${d.getDate()} ${MONTHS[d.getMonth()]}`; };
+const DOW_NL = ["ma", "di", "wo", "do", "vr", "za", "zo"];
+const MONTHS_NL = ["jan", "feb", "mrt", "apr", "mei", "jun", "jul", "aug", "sep", "okt", "nov", "dec"];
+const mon = (i) => (nl() ? MONTHS_NL : MONTHS)[i];
+const dow = (i) => (nl() ? DOW_NL : DOW)[i];
+const fmtDay = (s) => { const d = pd(s); return `${d.getDate()} ${mon(d.getMonth())}`; };
+const fmtDayLong = (s) => { const d = pd(s); return `${dow((d.getDay() + 6) % 7)} ${d.getDate()} ${mon(d.getMonth())}`; };
+/** "Mon 12 Oct" from the server, in the page's language. */
+const trDate = (s) => (nl() ? String(s).replace(/\b(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\b/, (m) => DOW_NL[DOW.indexOf(m)])
+  .replace(/\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b/, (m) => MONTHS_NL[MONTHS.indexOf(m)]) : s);
+const locale = () => (nl() ? "nl-NL" : undefined);
 const bin = (n) => (n <= 0 ? -1 : n <= 8 ? 0 : n <= 15 ? 1 : n <= 22 ? 2 : 3);
 
 class WorkoutOverviewCard extends HTMLElement {
@@ -1502,7 +2403,7 @@ class WorkoutOverviewCard extends HTMLElement {
     const dd = wtGet(hass, "day");
     const ex = wtGet(hass, "export");
     const ac = wtGet(hass, "activity");
-    const key = (st?.last_updated || "-") + (ex?.last_updated || "-") + (ac?.last_updated || "-") + (this.hasAttribute("data-dark") ? "d" : "l");
+    const key = (st?.last_updated || "-") + (ex?.last_updated || "-") + (ac?.last_updated || "-") + (this.hasAttribute("data-dark") ? "d" : "l") + WT_LANG.get();
     const dkey = dd?.last_updated || "-";
     // Someone is typing in a field: redraw when they leave it, not under their fingers.
     const typing = this.shadowRoot.activeElement?.matches?.("input, select, textarea");
@@ -1558,7 +2459,7 @@ class WorkoutOverviewCard extends HTMLElement {
     const st = wtGet(this._hass, "stats");
     if (!st) {
       wtBody(this, CSS + OV_CSS).innerHTML = `<div class="wc empty">
-        <p class="big">No stats yet</p><p>Update <code>workout.py</code> and reload it, then log a set.</p></div>`;
+        <p class="big">${L("No stats yet")}</p><p>Update <code>workout.py</code> and reload it, then log a set.</p></div>`;
       return;
     }
     this._dark = this.hasAttribute("data-dark");
@@ -1578,6 +2479,7 @@ class WorkoutOverviewCard extends HTMLElement {
           ${this._weekly(a, colW)}
           ${this._calendar(a, colW)}
           ${this._gymTime(a, colW)}
+          ${this._cardioPanel(colW)}
           ${this._balance(a)}
           ${this._body(a, colW)}
           ${this._bests(a)}
@@ -1617,7 +2519,7 @@ class WorkoutOverviewCard extends HTMLElement {
     this._scrollToDay = true;
     this._renderCal();
     wtCall(this._hass, "workout_open_day", { day }).catch((err) => {
-      this._dayErr = `Couldn't open this day: ${err.message || err}`;
+      this._dayErr = L("Couldn't open this day: {e}", { e: err.message || err });
       this._renderCal();
     });
   }
@@ -1646,7 +2548,7 @@ class WorkoutOverviewCard extends HTMLElement {
       this._flashDay(msg);
       this._renderCal();
     } catch (err) {
-      this._dayErr = `Couldn't save: ${err.message || err}`;
+      this._dayErr = L("Couldn't save: {e}", { e: err.message || err });
       this._renderCal();
     }
   }
@@ -1655,13 +2557,13 @@ class WorkoutOverviewCard extends HTMLElement {
     if (!tr) return;
     const val = (f) => tr.querySelector(`[data-f="${f}"]`).value.replace(",", ".");
     const weight = Number(val("weight")), reps = Math.round(Number(val("reps"))), rpe = Number(val("rpe") || 0);
-    if (isNaN(weight) || weight < 0 || !reps || reps < 1) { this._dayErr = "Weight must be 0 or more and reps at least 1."; this._renderCal(); return; }
+    if (isNaN(weight) || weight < 0 || !reps || reps < 1) { this._dayErr = L("Weight must be 0 or more and reps at least 1."); this._renderCal(); return; }
     this._dayErr = "";
-    this._mutate("workout_update_set", { set_id: Number(tr.dataset.id), weight, reps, rpe }, "Saved");
+    this._mutate("workout_update_set", { set_id: Number(tr.dataset.id), weight, reps, rpe }, L("Saved"));
   }
 
   _addSet(exercise) {
-    this._mutate("workout_add_set", { day: this._day, exercise }, `Added a set of ${exercise}`);
+    this._mutate("workout_add_set", { day: this._day, exercise }, L("Added a set of {ex}", { ex: exercise }));
   }
 
   _onAct(e) {
@@ -1678,9 +2580,15 @@ class WorkoutOverviewCard extends HTMLElement {
     } else if (act === "close") {
       this._closeDay();
     } else if (act === "del") {
-      if (b.dataset.armed) this._mutate("workout_delete_set", { set_id: Number(b.dataset.id) }, "Set removed");
+      if (b.dataset.armed) this._mutate("workout_delete_set", { set_id: Number(b.dataset.id) }, L("Set removed"));
       else {
-        b.dataset.armed = "1"; b.textContent = "Remove?"; b.classList.add("armed");
+        b.dataset.armed = "1"; b.textContent = L("Remove?"); b.classList.add("armed");
+        setTimeout(() => { if (b.isConnected) { delete b.dataset.armed; b.textContent = "\u2715"; b.classList.remove("armed"); } }, 3000);
+      }
+    } else if (act === "cdel") {
+      if (b.dataset.armed) this._mutate("workout_delete_cardio", { entry_id: Number(b.dataset.id) }, L("Removed"));
+      else {
+        b.dataset.armed = "1"; b.textContent = L("Remove?"); b.classList.add("armed");
         setTimeout(() => { if (b.isConnected) { delete b.dataset.armed; b.textContent = "\u2715"; b.classList.remove("armed"); } }, 3000);
       }
     } else if (act === "addset") {
@@ -1690,17 +2598,17 @@ class WorkoutOverviewCard extends HTMLElement {
       this._render();
     } else if (act === "wu") {
       this._mutate("workout_update_set", { set_id: Number(b.dataset.id), warmup: b.dataset.on !== "1" },
-        b.dataset.on === "1" ? "Marked as working set" : "Marked as warm-up");
+        b.dataset.on === "1" ? L("Marked as working set") : L("Marked as warm-up"));
     } else if (act === "body-add") {
       const metric = this.shadowRoot.getElementById("b-metric").value;
       const raw = this.shadowRoot.getElementById("b-value").value.replace(",", ".");
       const value = Number(raw);
-      if (!raw || isNaN(value) || value <= 0) { this._bodyMsg = "Enter a number first."; this._render(); return; }
+      if (!raw || isNaN(value) || value <= 0) { this._bodyMsg = L("Enter a number first."); this._render(); return; }
       this._bodyMetric = metric === "height" ? null : metric;
       if (metric === "height") this._heightEdit = false;
       wtCall(this._hass, "workout_log_body", { metric, value })
-        .then(() => { this._bodyMsg = "Saved"; this._render(); setTimeout(() => { this._bodyMsg = ""; this._render(); }, 2000); })
-        .catch((err) => { this._bodyMsg = `Couldn't save: ${err.message || err}`; this._render(); });
+        .then(() => { this._bodyMsg = L("Saved"); this._render(); setTimeout(() => { this._bodyMsg = ""; this._render(); }, 2000); })
+        .catch((err) => { this._bodyMsg = L("Couldn't save: {e}", { e: err.message || err }); this._render(); });
     } else if (act === "height-edit") {
       this._heightEdit = true;
       this._bodyMetric = "height";
@@ -1709,18 +2617,18 @@ class WorkoutOverviewCard extends HTMLElement {
     } else if (act === "body-del") {
       if (b.dataset.armed) wtCall(this._hass, "workout_delete_body", { entry_id: Number(b.dataset.id) });
       else {
-        b.dataset.armed = "1"; b.textContent = "Remove?"; b.classList.add("armed");
+        b.dataset.armed = "1"; b.textContent = L("Remove?"); b.classList.add("armed");
         setTimeout(() => { if (b.isConnected) { delete b.dataset.armed; b.textContent = "\u2715"; b.classList.remove("armed"); } }, 3000);
       }
     } else if (act === "act-save") {
       const root = this.shadowRoot;
       const val = (id) => root.getElementById(id)?.value ?? "";
       const goal = Number(val("act-goal"));
-      if (!goal || goal < 500) { this._actMsg = "Step goal must be at least 500."; this._render(); return; }
+      if (!goal || goal < 500) { this._actMsg = L("Step goal must be at least 500."); this._render(); return; }
       const data = { goal, nudge: root.getElementById("act-nudge-on")?.checked ? (val("act-nudge") || "17:00") : "" };
       wtCall(this._hass, "workout_activity_settings", data)
-        .then(() => { this._actMsg = "Saved"; this._render(); setTimeout(() => { this._actMsg = ""; this._render(); }, 2000); })
-        .catch((err) => { this._actMsg = `Couldn't save: ${err.message || err}`; this._render(); });
+        .then(() => { this._actMsg = L("Saved"); this._render(); setTimeout(() => { this._actMsg = ""; this._render(); }, 2000); })
+        .catch((err) => { this._actMsg = L("Couldn't save: {e}", { e: err.message || err }); this._render(); });
     } else if (act === "act-body") {
       this._bodyMetric = b.dataset.metric;
       this._render();
@@ -1755,26 +2663,27 @@ class WorkoutOverviewCard extends HTMLElement {
       const info = days.get(iso);
       const future = iso > today;
       if (info) { workouts++; sets += info[1]; }
-      const label = `${fmtDayLong(iso)}${info ? `, ${info[1]} sets: ${info[2].map(title).join(", ")}` : future ? "" : ", rest day"}`;
-      cells.push(`<button class="mday ${info ? "on" : ""} ${iso === today ? "today" : ""} ${iso === this._day ? "sel" : ""}"
+      const cmin = info ? info[3] || 0 : 0;
+      const label = `${fmtDayLong(iso)}${info ? `, ${[info[1] ? L("{n} sets: {g}", { n: info[1], g: info[2].map(gname).join(", ") }) : "", cmin ? L("{m} min cardio", { m: cmin }) : ""].filter(Boolean).join(", ")}` : future ? "" : `, ${L("rest day")}`}`;
+      cells.push(`<button class="mday ${info ? "on" : ""} ${cmin ? "c" : ""} ${cmin && !info[1] ? "conly" : ""} ${iso === today ? "today" : ""} ${iso === this._day ? "sel" : ""}"
         data-act="day" data-d="${iso}" ${future ? "disabled" : ""} aria-label="${esc(label)}" aria-pressed="${iso === this._day}">
         <span class="dn">${d}</span>
-        <span class="pl">${info ? info[1] : ""}</span>
+        <span class="pl">${info && info[1] ? info[1] : ""}</span>
       </button>`);
     }
-    const monthName = first.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+    const monthName = first.toLocaleDateString(locale(), { month: "long", year: "numeric" });
     return `<section class="panel span calm">
       <div class="phead">
-        <h2>Calendar</h2>
+        <h2>${L("Calendar")}</h2>
         <div class="mnav">
-          <button data-act="prev" aria-label="Previous month" ${key <= earliest ? "disabled" : ""}>\u2039</button>
+          <button data-act="prev" aria-label="${L("Previous month")}" ${key <= earliest ? "disabled" : ""}>\u2039</button>
           <span>${esc(monthName)}</span>
-          <button data-act="next" aria-label="Next month" ${key >= today.slice(0, 7) ? "disabled" : ""}>\u203a</button>
+          <button data-act="next" aria-label="${L("Next month")}" ${key >= today.slice(0, 7) ? "disabled" : ""}>\u203a</button>
         </div>
       </div>
-      <p class="sub">${workouts ? `${workouts} workout${workouts === 1 ? "" : "s"} and ${sets} sets this month. Tap a day to see or change it.` : "No workouts logged this month. Tap a day to add one."}</p>
+      <p class="sub">${workouts ? L(workouts === 1 ? "1 workout and {s} sets this month. Tap a day to see or change it." : "{n} workouts and {s} sets this month. Tap a day to see or change it.", { n: workouts, s: sets }) : L("No workouts logged this month. Tap a day to add one.")}</p>
       <div class="calbody ${this._day ? "open" : ""}">
-        <div class="mgrid">${DOW.map((d) => `<span class="mh">${d.slice(0, 2)}</span>`).join("")}${cells.join("")}</div>
+        <div class="mgrid">${DOW.map((d) => `<span class="mh">${nl() ? DOW_NL[DOW.indexOf(d)] : d.slice(0, 2)}</span>`).join("")}${cells.join("")}</div>
         ${this._day ? this._dayPanel() : ""}
       </div>
     </section>`;
@@ -1784,38 +2693,43 @@ class WorkoutOverviewCard extends HTMLElement {
     const d = this._dayData();
     const head = `<div class="dhead"><h3>${esc(fmtDayLong(this._day))}</h3>
       <span class="dmsg" role="status">${esc(this._dayMsg || "")}</span>
-      <button class="link quiet" data-act="close">Close</button></div>`;
+      <button class="link quiet" data-act="close">${L("Close")}</button></div>`;
     if (this._dayErr && !d) return `<div class="dayd" id="dayd">${head}<p class="err">${esc(this._dayErr)}</p></div>`;
-    if (!d) return `<div class="dayd" id="dayd">${head}<p class="hint">Loading\u2026</p></div>`;
+    if (!d) return `<div class="dayd" id="dayd">${head}<p class="hint">${L("Loading\u2026")}</p></div>`;
     const rpeOpts = (v) => `<option value="0" ${!v ? "selected" : ""}>\u2013</option>` +
       [6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10].map((r) => `<option value="${r}" ${Number(v) === r ? "selected" : ""}>${r}</option>`).join("");
     const blocks = d.exercises.map((ex) => `<div class="dex">
-      <h4>${esc(ex.name)} <small>${esc(title(ex.group))}</small></h4>
-      <table class="dsets"><thead><tr><th scope="col">Set</th><th scope="col">Weight</th><th scope="col">Reps</th><th scope="col">RPE</th><th scope="col"><span class="sr">Type</span></th><th></th></tr></thead><tbody>
+      <h4>${esc(ex.name)} <small>${esc(gname(ex.group))}</small></h4>
+      <table class="dsets"><thead><tr><th scope="col">${L("Set")}</th><th scope="col">${L("Weight")}</th><th scope="col">${L("Reps")}</th><th scope="col">RPE</th><th scope="col"><span class="sr">${L("Type")}</span></th><th></th></tr></thead><tbody>
       ${ex.sets.map((s, i) => `<tr data-id="${s.id}">
         <td class="sn">${i + 1}</td>
-        <td><label class="unit"><input data-f="weight" inputmode="decimal" value="${num(s.weight)}" aria-label="Set ${i + 1} weight in kg"><span>kg</span></label></td>
-        <td><input data-f="reps" inputmode="numeric" value="${s.reps}" aria-label="Set ${i + 1} reps"></td>
-        <td><select data-f="rpe" aria-label="Set ${i + 1} RPE">${rpeOpts(s.rpe)}</select></td>
+        <td><label class="unit"><input data-f="weight" inputmode="decimal" value="${num(s.weight)}" aria-label="${L("Set {n} weight in kg", { n: i + 1 })}"><span>kg</span></label></td>
+        <td><input data-f="reps" inputmode="numeric" value="${s.reps}" aria-label="${L("Set {n} reps", { n: i + 1 })}"></td>
+        <td><select data-f="rpe" aria-label="${L("Set {n} RPE", { n: i + 1 })}">${rpeOpts(s.rpe)}</select></td>
         <td><button class="wtog ${s.kind === "warmup" ? "on" : ""}" data-act="wu" data-id="${s.id}" data-on="${s.kind === "warmup" ? 1 : 0}"
-          aria-pressed="${s.kind === "warmup"}" title="Warm-up set">W</button></td>
-        <td><button class="del" data-act="del" data-id="${s.id}" aria-label="Remove set ${i + 1}">\u2715</button></td>
+          aria-pressed="${s.kind === "warmup"}" title="${L("Warm-up set")}">W</button></td>
+        <td><button class="del" data-act="del" data-id="${s.id}" aria-label="${L("Remove set {n}", { n: i + 1 })}">\u2715</button></td>
       </tr>`).join("")}
       </tbody></table>
       <button class="link" data-act="addset" data-ex="${esc(ex.name)}">+ Add a set</button>
     </div>`).join("");
-    const catalog = (d.catalog || []).map((c) => `<optgroup label="${esc(title(c.group))}">${c.exercises.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join("")}</optgroup>`).join("");
-    const visit = (d.visit || []).map((v) => v.end ? `at the gym ${v.start}\u2013${v.end} (${v.minutes} min)` : `at the gym since ${v.start}`).join(", ");
+    const catalog = (d.catalog || []).map((c) => `<optgroup label="${esc(gname(c.group))}">${c.exercises.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join("")}</optgroup>`).join("");
+    const visit = (d.visit || []).map((v) => v.end ? L("at the gym {a}\u2013{b} ({m} min)", { a: v.start, b: v.end, m: v.minutes }) : L("at the gym since {t}", { t: v.start })).join(", ");
     const sub = d.sets || d.warmups
-      ? `${d.groups.map(title).join(" + ")}: ${d.sets} working set${d.sets === 1 ? "" : "s"}${d.warmups ? ` + ${d.warmups} warm-up${d.warmups === 1 ? "" : "s"}` : ""}${visit ? `, ${visit}` : ""}. Changes save when you leave a field; W marks a warm-up.`
-      : "Nothing logged on this day. Add the exercises you did below.";
+      ? `${d.groups.map(gname).join(" + ")}: ${L(d.sets === 1 ? "1 working set" : "{n} working sets", { n: d.sets })}${d.warmups ? ` + ${L(d.warmups === 1 ? "1 warm-up" : "{n} warm-ups", { n: d.warmups })}` : ""}${visit ? `, ${visit}` : ""}. ${L("Changes save when you leave a field; W marks a warm-up.")}`
+      : (d.cardio || []).length ? L("Cardio only. Add exercises below if you also lifted.")
+      : L("Nothing logged on this day. Add the exercises you did below.");
+    const cardio = (d.cardio || []).length ? `<div class="dex"><h4>${L("Cardio")}</h4><ul class="ctoday">${d.cardio.map((c) => `<li>
+        <span><b>${esc(aname(c.activity))}</b> ${esc(cardioLine(c))}</span>
+        <button class="del" data-act="cdel" data-id="${c.id}" aria-label="${L("Delete")}">\u2715</button></li>`).join("")}</ul></div>` : "";
     return `<div class="dayd" id="dayd">
       ${head}
       <p class="sub">${esc(sub)}</p>
       ${this._dayErr ? `<p class="err">${esc(this._dayErr)}</p>` : ""}
       ${blocks}
-      <label class="addex"><span>Add an exercise</span>
-        <select id="add-ex"><option value="">Choose\u2026</option>${catalog}</select></label>
+      ${cardio}
+      <label class="addex"><span>${L("Add an exercise")}</span>
+        <select id="add-ex"><option value="">${L("Choose\u2026")}</option>${catalog}</select></label>
     </div>`;
   }
 
@@ -1824,7 +2738,7 @@ class WorkoutOverviewCard extends HTMLElement {
     const part = wtGet(this._hass, "activity");
     const a = part?.attributes;
     if (!a || !a.settings) return "";
-    const n = (x) => (x == null ? "\u2013" : Number(x).toLocaleString());
+    const n = (x) => (x == null ? "\u2013" : Number(x).toLocaleString(locale()));
     const s = a.settings;
     const k = a.kcal || {};
     const pct = Math.min(100, a.percent || 0);
@@ -1834,22 +2748,22 @@ class WorkoutOverviewCard extends HTMLElement {
     // ---- today
     const left = Math.max(0, a.goal - a.steps);
     const stepsTile = `<div class="atile">
-        <span class="alab">Steps today</span>
-        <p class="abig"><b>${n(a.steps)}</b><span>of ${n(a.goal)}</span></p>
+        <span class="alab">${L("Steps today")}</span>
+        <p class="abig"><b>${n(a.steps)}</b><span>${L("of {g}", { g: n(a.goal) })}</span></p>
         <div class="track agoal" role="progressbar" aria-valuemin="0" aria-valuemax="${a.goal}" aria-valuenow="${a.steps}"
-          aria-label="Steps toward today's goal"><i style="width:${pct}%" class="${a.steps >= a.goal ? "met" : ""}"></i></div>
-        <small>${a.steps >= a.goal ? "Goal reached" : `${n(left)} to go`}</small>
+          aria-label="${L("Steps toward today's goal")}"><i style="width:${pct}%" class="${a.steps >= a.goal ? "met" : ""}"></i></div>
+        <small>${a.steps >= a.goal ? L("Goal reached") : L("{n} to go", { n: n(left) })}</small>
       </div>`;
-    const gymWhy = a.gym_basis === "visit" ? `${a.gym_minutes} min at the gym` : a.gym_basis === "sets" ? `${a.gym_minutes} min, from the sets you logged` : "no gym today";
+    const gymWhy = a.gym_basis === "visit" ? L("{m} min at the gym", { m: a.gym_minutes }) : a.gym_basis === "sets" ? L("{m} min, from the sets you logged", { m: a.gym_minutes }) : L("no gym today");
     const parts = [
-      ["Walking", k.walking, `${n(a.steps)} steps`],
-      ["Gym", k.gym, gymWhy],
+      [L("Walking"), k.walking, L("{n} steps", { n: n(a.steps) })],
+      [L("Gym"), k.gym, gymWhy],
     ];
     const kcalTile = `<div class="atile">
-        <span class="alab">Active calories today</span>
+        <span class="alab">${L("Active calories today")}</span>
         <p class="abig"><b>${k.total == null ? "\u2013" : `\u2248 ${n(k.total)}`}</b><span>kcal</span></p>
         <ul class="akcal">${parts.map(([l, v, tip]) => `<li data-tip="${esc(`<b>${l}</b><br>${tip}`)}"><span>${l}</span><b>${n(v)}</b></li>`).join("")}</ul>
-        ${a.watch_kcal != null ? `<small>Watch measured ${n(a.watch_kcal)} kcal active today</small>` : `<small>What you burned by moving, estimated from your weight, steps and gym time. Your resting burn isn't included.</small>`}
+        ${a.watch_kcal != null ? `<small>${L("Watch measured {k} kcal active today", { k: n(a.watch_kcal) })}</small>` : `<small>${L("What you burned by moving, estimated from your weight, steps and gym time. Your resting burn isn't included.")}</small>`}
       </div>`;
 
     // ---- two weeks of steps
@@ -1871,41 +2785,41 @@ class WorkoutOverviewCard extends HTMLElement {
         const r = Math.min(4, barW / 2, h);
         const met = d.goal && v >= d.goal;
         const isToday = i === days.length - 1;
-        const tip = `<b>${isToday ? "Today" : fmtDayLong(d.day)}</b><br>${d.steps == null ? "No data" : `${n(v)} steps`}${d.kcal != null ? `<br>\u2248 ${n(d.kcal)} kcal${isToday ? " so far" : ""}` : ""}${d.watch_kcal != null ? `<br><span class="mute">watch: ${n(d.watch_kcal)} kcal active</span>` : ""}`;
+        const tip = `<b>${isToday ? L("Today") : fmtDayLong(d.day)}</b><br>${d.steps == null ? L("No data") : L("{n} steps", { n: n(v) })}${d.kcal != null ? `<br>\u2248 ${n(d.kcal)} kcal${isToday ? ` ${L("so far")}` : ""}` : ""}${d.watch_kcal != null ? `<br><span class="mute">${L("watch: {k} kcal active", { k: n(d.watch_kcal) })}</span>` : ""}`;
         const bar = v ? `<path d="M${cx - barW / 2},${y(0)} V${y(v) + r} q0,-${r} ${r},-${r} H${cx + barW / 2 - r} q${r},0 ${r},${r} V${y(0)} Z" class="sbar ${met ? "met" : ""} ${isToday ? "now" : ""}"/>` : "";
         return `<g data-tip="${esc(tip)}"><rect x="${cx - bw / 2}" y="${padT}" width="${bw}" height="${H - padT - padB}" fill="transparent"/>${bar}</g>`;
       }).join("");
       const grid = ticks.map((t) => `<line x1="${padL}" x2="${W}" y1="${y(t)}" y2="${y(t)}" class="gl"/><text x="${padL - 6}" y="${y(t) + 4}" class="ax" text-anchor="end">${t >= 1000 ? `${num(t / 1000)}k` : t}</text>`).join("");
-      const goalLine = `<line x1="${padL}" x2="${W}" y1="${y(a.goal)}" y2="${y(a.goal)}" class="goalline"/><text x="${W}" y="${y(a.goal) - 5}" class="ax" text-anchor="end">goal</text>`;
-      const xl = `<text x="${padL + bw / 2}" y="${H - 5}" class="ax" text-anchor="start">${fmtDay(days[0].day)}</text><text x="${W}" y="${H - 5}" class="ax" text-anchor="end">Today</text>`;
-      chart = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Steps per day, last two weeks">${grid}${goalLine}${bars}${xl}</svg>`;
+      const goalLine = `<line x1="${padL}" x2="${W}" y1="${y(a.goal)}" y2="${y(a.goal)}" class="goalline"/><text x="${W}" y="${y(a.goal) - 5}" class="ax" text-anchor="end">${L("goal")}</text>`;
+      const xl = `<text x="${padL + bw / 2}" y="${H - 5}" class="ax" text-anchor="start">${fmtDay(days[0].day)}</text><text x="${W}" y="${H - 5}" class="ax" text-anchor="end">${L("Today")}</text>`;
+      chart = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="${L("Steps per day, last two weeks")}">${grid}${goalLine}${bars}${xl}</svg>`;
     }
     const h = a.history || {};
     const summary = h.days_counted_7d
-      ? `Last 7 days: ${n(h.avg_steps_7d)} steps a day on average, goal reached on ${h.goal_days_7d} of ${h.days_counted_7d} day${h.days_counted_7d === 1 ? "" : "s"}${h.avg_kcal_7d != null ? `, \u2248 ${n(h.avg_kcal_7d)} kcal a day` : ""}.`
-      : "Your daily history builds up from today.";
+      ? L("Last 7 days: {s} steps a day on average, goal reached on {g} of {d} days", { s: n(h.avg_steps_7d), g: h.goal_days_7d, d: h.days_counted_7d }) + (h.avg_kcal_7d != null ? `, ${L("\u2248 {k} kcal a day", { k: n(h.avg_kcal_7d) })}` : "") + "."
+      : L("Your daily history builds up from today.");
 
     // ---- what's missing
     const hints = [];
-    if (noSteps) hints.push("No step counter found. Install the Home Assistant app on your phone, link your phone to your person (Settings \u2192 People), and turn on its Steps sensor.");
-    if (noWeight) hints.push(`Add your body weight in Body below for the calorie estimate. <button class="link quiet" data-act="act-body" data-metric="weight">Add weight</button>`);
+    if (noSteps) hints.push(L("No step counter found. Install the Home Assistant app on your phone, link your phone to your person (Settings \u2192 People), and turn on its Steps sensor."));
+    if (noWeight) hints.push(`${L("Add your body weight in Body below for the calorie estimate.")} <button class="link quiet" data-act="act-body" data-metric="weight">${L("Add weight")}</button>`);
 
     // ---- settings
     const settingsOpen = this._actMsg ? "open" : "";
-    const settings = `<details class="numbers aset" ${settingsOpen}><summary>Settings</summary>
+    const settings = `<details class="numbers aset" ${settingsOpen}><summary>${L("Settings")}</summary>
         <div class="bform agrid">
-          <label>Step goal<input id="act-goal" inputmode="numeric" value="${s.goal}"></label>
-          <label class="anudge">Reminder at<span class="unit"><input type="checkbox" id="act-nudge-on" ${s.nudge ? "checked" : ""} aria-label="Step reminder on">
-            <input id="act-nudge" type="time" value="${s.nudge || "17:00"}" aria-label="Reminder time"></span></label>
-          <button class="add-btn" data-act="act-save">Save</button>
+          <label>${L("Step goal")}<input id="act-goal" inputmode="numeric" value="${s.goal}"></label>
+          <label class="anudge">${L("Reminder at")}<span class="unit"><input type="checkbox" id="act-nudge-on" ${s.nudge ? "checked" : ""} aria-label="${L("Step reminder on")}">
+            <input id="act-nudge" type="time" value="${s.nudge || "17:00"}" aria-label="${L("Reminder time")}"></span></label>
+          <button class="add-btn" data-act="act-save">${L("Save")}</button>
         </div>
-        <p class="sub">${a.phone ? "The reminder goes to your phone when you're below your goal at that time." : "No phone found for reminders: set Notifications in the integration's settings."}
-          Steps from ${(a.sources?.steps || []).map((e) => `<code>${esc(e)}</code>`).join(", ") || "nothing yet"}.</p>
+        <p class="sub">${a.phone ? L("The reminder goes to your phone when you're below your goal at that time.") : L("No phone found for reminders: set Notifications in the integration's settings.")}
+          ${L("Steps from {s}.", { s: (a.sources?.steps || []).map((e) => `<code>${esc(e)}</code>`).join(", ") || L("nothing yet") })}</p>
         ${this._actMsg ? `<p class="hint">${esc(this._actMsg)}</p>` : ""}
       </details>`;
 
     return `<section class="panel span act">
-      <h2>Activity</h2>
+      <h2>${L("Activity")}</h2>
       <div class="atiles">${stepsTile}${kcalTile}</div>
       ${hints.map((t) => `<p class="warn">${t}</p>`).join("")}
       ${chart}
@@ -1919,11 +2833,11 @@ class WorkoutOverviewCard extends HTMLElement {
     const g = a.gym;
     if (!g) return "";
     const weeks = g.weeks || [];
-    const fmt = (m) => (m >= 60 ? `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ""}` : `${m} min`);
+    const fmt = (m) => (m >= 60 ? `${Math.floor(m / 60)} ${nl() ? "u" : "h"}${m % 60 ? ` ${m % 60} min` : ""}` : `${m} min`);
     const any = weeks.some((w) => w.minutes);
     if (!any) {
-      return `<section class="panel"><h2>Time in the gym</h2>
-        <p class="hint">Nothing yet. It fills in from gym arrivals and departures, or from when you log your first and last set.</p></section>`;
+      return `<section class="panel"><h2>${L("Time in the gym")}</h2>
+        <p class="hint">${L("Nothing yet. It fills in from gym arrivals and departures, or from when you log your first and last set.")}</p></section>`;
     }
     const H = 150, padL = 30, padB = 22, padT = 18;
     const maxH = Math.max(1, ...weeks.map((w) => w.minutes / 60));
@@ -1938,19 +2852,71 @@ class WorkoutOverviewCard extends HTMLElement {
       const hrs = w.minutes / 60;
       const h = Math.max(0, y(0) - y(hrs));
       const r = Math.min(4, barW / 2, h);
-      const est = w.estimated_minutes ? `<br><span class="mute">${fmt(w.estimated_minutes)} estimated from logged sets</span>` : "";
-      const tip = `<b>Week of ${fmtDay(w.start)}</b><br>${w.minutes ? `${fmt(w.minutes)} over ${w.visits} visit${w.visits === 1 ? "" : "s"}` : "No gym time"}${est}`;
+      const est = w.estimated_minutes ? `<br><span class="mute">${L("{t} estimated from logged sets", { t: fmt(w.estimated_minutes) })}</span>` : "";
+      const tip = `<b>${L("Week of {d}", { d: fmtDay(w.start) })}</b><br>${w.minutes ? L(w.visits === 1 ? "{t} over 1 visit" : "{t} over {n} visits", { t: fmt(w.minutes), n: w.visits }) : L("No gym time")}${est}`;
       const bar = w.minutes ? `<path d="M${cx - barW / 2},${y(0)} V${y(hrs) + r} q0,-${r} ${r},-${r} H${cx + barW / 2 - r} q${r},0 ${r},${r} V${y(0)} Z" fill="${col}" class="${i === weeks.length - 1 ? "" : "past"}"/>` : "";
       return `<g data-tip="${esc(tip)}"><rect x="${cx - bw / 2}" y="${padT}" width="${bw}" height="${H - padT - padB}" fill="transparent"/>${bar}</g>`;
     }).join("");
     const grid = ticks.map((t) => `<line x1="${padL}" x2="${W}" y1="${y(t)}" y2="${y(t)}" class="gl"/><text x="${padL - 6}" y="${y(t) + 4}" class="ax" text-anchor="end">${t}h</text>`).join("");
-    const xl = `<text x="${padL + bw / 2}" y="${H - 5}" class="ax" text-anchor="start">${fmtDay(weeks[0].start)}</text><text x="${W}" y="${H - 5}" class="ax" text-anchor="end">This week</text>`;
+    const xl = `<text x="${padL + bw / 2}" y="${H - 5}" class="ax" text-anchor="start">${fmtDay(weeks[0].start)}</text><text x="${W}" y="${H - 5}" class="ax" text-anchor="end">${L("This week")}</text>`;
     const avg = g.avg_week_minutes;
     return `<section class="panel">
-      <h2>Time in the gym</h2>
-      <p class="stat"><b>${avg != null ? fmt(avg) : fmt(g.this_week_minutes)}</b><span>${avg != null ? `a week on average (last ${g.avg_weeks_counted} full week${g.avg_weeks_counted === 1 ? "" : "s"})` : "so far this week"}</span></p>
-      <p class="sub">${g.avg_session_minutes ? `About ${fmt(g.avg_session_minutes)} per visit. ` : ""}This week: ${fmt(g.this_week_minutes)}.</p>
-      <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Hours in the gym per week">${grid}${bars}${xl}</svg>
+      <h2>${L("Time in the gym")}</h2>
+      <p class="stat"><b>${avg != null ? fmt(avg) : fmt(g.this_week_minutes)}</b><span>${avg != null ? L(g.avg_weeks_counted === 1 ? "a week on average (last full week)" : "a week on average (last {n} full weeks)", { n: g.avg_weeks_counted }) : L("so far this week")}</span></p>
+      <p class="sub">${g.avg_session_minutes ? `${L("About {t} per visit.", { t: fmt(g.avg_session_minutes) })} ` : ""}${L("This week: {t}.", { t: fmt(g.this_week_minutes) })}</p>
+      <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="${L("Hours in the gym per week")}">${grid}${bars}${xl}</svg>
+    </section>`;
+  }
+
+  // Cardio ----------------------------------------------------------------
+  _cardioPanel(W) {
+    const c = wtGet(this._hass, "cardio")?.attributes;
+    if (!c || !c.weeks) return "";
+    const weeks = c.weeks;
+    if (!weeks.some((w) => w.minutes)) {
+      return `<section class="panel"><h2>${L("Cardio")}</h2>
+        <p class="hint">${L("Nothing yet. Turn on Cardio on the Workout tab to log treadmill, bike, rower and more.")}</p></section>`;
+    }
+    const H = 150, padL = 34, padB = 22, padT = 18;
+    const target = c.target || 150;
+    const ticks = niceTicks(0, Math.max(target, ...weeks.map((w) => w.minutes)), 3);
+    const top = ticks[ticks.length - 1];
+    const bw = (W - padL) / weeks.length;
+    const barW = Math.max(6, Math.min(28, bw - 4));
+    const y = (v) => padT + (H - padT - padB) * (1 - v / top);
+    const bars = weeks.map((w, i) => {
+      const cx = padL + bw * i + bw / 2;
+      const h = Math.max(0, y(0) - y(w.minutes));
+      const r = Math.min(4, barW / 2, h);
+      const tip = `<b>${L("Week of {d}", { d: fmtDay(w.start) })}</b><br>${w.minutes ? `${w.minutes} min${w.km ? ` \u00b7 ${num(w.km)} km` : ""} \u00b7 ${L("{n} sessions", { n: w.sessions })}` : L("No cardio")}`;
+      const bar = w.minutes ? `<path d="M${cx - barW / 2},${y(0)} V${y(w.minutes) + r} q0,-${r} ${r},-${r} H${cx + barW / 2 - r} q${r},0 ${r},${r} V${y(0)} Z" class="cbar ${w.minutes >= target ? "hit" : ""} ${i === weeks.length - 1 ? "" : "past"}"/>` : "";
+      return `<g data-tip="${esc(tip)}"><rect x="${cx - bw / 2}" y="${padT}" width="${bw}" height="${H - padT - padB}" fill="transparent"/>${bar}</g>`;
+    }).join("");
+    const grid = ticks.map((t) => `<line x1="${padL}" x2="${W}" y1="${y(t)}" y2="${y(t)}" class="gl"/><text x="${padL - 6}" y="${y(t) + 4}" class="ax" text-anchor="end">${t}</text>`).join("");
+    const goal = `<line x1="${padL}" x2="${W}" y1="${y(target)}" y2="${y(target)}" class="goal-l"/><text x="${W}" y="${y(target) - 5}" class="ax goal-t" text-anchor="end">${L("{t} min goal", { t: target })}</text>`;
+    const xl = `<text x="${padL + bw / 2}" y="${H - 5}" class="ax" text-anchor="start">${fmtDay(weeks[0].start)}</text><text x="${W}" y="${H - 5}" class="ax" text-anchor="end">${L("This week")}</text>`;
+    const done = weeks.slice(0, -1).filter((w) => w.minutes);
+    const avg = done.length ? Math.round(done.reduce((t, w) => t + w.minutes, 0) / (weeks.length - 1)) : null;
+    // per activity: last session and how the pace moved over the last ones
+    const acts = Object.entries(c.trend || {}).sort((x, y2) => (y2[1].at(-1).day > x[1].at(-1).day ? 1 : -1)).slice(0, 4).map(([k, pts]) => {
+      const last = pts.at(-1);
+      const withPace = ["treadmill", "run", "walk"].includes(k) ? pts.filter((p) => p.pace) : [];
+      let move = "";
+      if (withPace.length >= 4) {
+        const half = Math.floor(withPace.length / 2);
+        const avgP = (xs) => xs.reduce((t, p) => t + p.pace, 0) / xs.length;
+        const diff = Math.round((avgP(withPace.slice(0, half)) - avgP(withPace.slice(half))) * 60);
+        if (Math.abs(diff) >= 3) move = diff > 0 ? `<em class="pos">${L("{s} s/km faster", { s: diff })}</em>` : `<em class="neg">${L("{s} s/km slower", { s: -diff })}</em>`;
+      }
+      return `<li><span><b>${esc(aname(k))}</b><small>${esc(L("{n} times", { n: pts.length }))} \u00b7 ${esc(L("last {d}", { d: fmtDay(last.day) }))}</small></span>
+        <span class="cl">${esc(cardioLine({ ...last, activity: k }))}${move}</span></li>`;
+    }).join("");
+    return `<section class="panel">
+      <h2>${L("Cardio")}</h2>
+      <p class="stat"><b>${c.week_minutes} min</b><span>${L("this week, goal {t}", { t: target })}</span></p>
+      <p class="sub">${avg != null ? L("About {m} min a week on average.", { m: avg }) : ""}</p>
+      <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="${L("Minutes of cardio per week")}">${grid}${goal}${bars}${xl}</svg>
+      ${acts ? `<ul class="cacts">${acts}</ul>` : ""}
     </section>`;
   }
 
@@ -1985,7 +2951,7 @@ class WorkoutOverviewCard extends HTMLElement {
       const path = pts.map((p, i) => `${i ? "L" : "M"}${x(p[0]).toFixed(1)},${yv(p[1]).toFixed(1)}`).join("");
       const ticks = niceTicks(lo, hi, 3).filter((t) => t >= lo && t <= hi);
       const last = pts[pts.length - 1];
-      chart = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Body weight over time">
+      chart = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="${L("Body weight over time")}">
         ${ticks.map((t) => `<line x1="${padL}" x2="${W - padR}" y1="${yv(t)}" y2="${yv(t)}" class="gl"/><text x="${padL - 6}" y="${yv(t) + 4}" class="ax" text-anchor="end">${num(t)}</text>`).join("")}
         <path d="${path}" fill="none" stroke="${col}" stroke-width="2" stroke-linejoin="round"/>
         ${pts.map((p) => `<circle cx="${x(p[0])}" cy="${yv(p[1])}" r="3" fill="${col}" class="pt" data-tip="${esc(`<b>${fmtDayLong(p[0])}</b><br>${num(p[1])} kg`)}"/>`).join("")}
@@ -2009,52 +2975,52 @@ class WorkoutOverviewCard extends HTMLElement {
       const pts = vals.map((v, i) => `${xs(i).toFixed(1)},${ys(v).toFixed(1)}`).join(" ");
       const label = `BMI from ${num(Math.round(vals[0] * 10) / 10)} on ${fmtDay(wser[0][0])} to ${num(Math.round(vals[vals.length - 1] * 10) / 10)}`;
       return `<svg class="spark" width="${SW}" height="${SH}" viewBox="0 0 ${SW} ${SH}" role="img" aria-label="${esc(label)}"
-          data-tip="${esc(`<b>BMI over time</b><br>${label}`)}">
+          data-tip="${esc(`<b>${L("BMI over time")}</b><br>${label}`)}">
         <polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
         <circle cx="${xs(vals.length - 1)}" cy="${ys(vals[vals.length - 1])}" r="2.6" class="last"/></svg>`;
     };
     const derived = (b.derived || []).map((d) => {
-      const ch = d.change ? `, ${d.change > 0 ? "+" : ""}${num(d.change)} since ${fmtDay(d.change_since)}` : "";
+      const ch = d.change ? `, ${L("{c} since {d}", { c: (d.change > 0 ? "+" : "") + num(d.change), d: fmtDay(d.change_since) })}` : "";
       const spark = d.key === "bmi" ? bmiSpark() : "";
-      return `<li${spark ? ' class="has-spark"' : ""}><span>${esc(d.label)}</span>
-        <b>${num(d.value)}${d.unit ? `<i>${esc(d.unit)}</i>` : ""}${spark}</b><small>${esc(d.note)}${ch}</small></li>`;
+      return `<li${spark ? ' class="has-spark"' : ""}><span>${esc(L(d.label))}</span>
+        <b>${num(d.value)}${d.unit ? `<i>${esc(d.unit)}</i>` : ""}${spark}</b><small>${esc(L(d.note))}${ch}</small></li>`;
     }).join("");
     const heightLine = heightCm != null
-      ? `<p class="hline">Height ${num(heightCm)} cm <button class="link quiet" data-act="height-edit">Change</button></p>`
+      ? `<p class="hline">${L("Height")} ${num(heightCm)} cm <button class="link quiet" data-act="height-edit">${L("Change")}</button></p>`
       : "";
     const derivedBlock = derived
       ? `<ul class="btiles derived">${derived}</ul>${heightLine}`
       : metrics.some((m) => m.key === "weight" && m.latest != null) && !hasHeight
-        ? `<p class="hint">Add your height (Measurement \u2192 Height) to see your BMI.</p>`
+        ? `<p class="hint">${L("Add your height (Measurement \u2192 Height) to see your BMI.")}</p>`
         : heightLine;
     const tiles = metrics.filter((m) => m.latest != null && m.key !== "height").map((m) => {
       const ch = m.change;
-      const chTxt = ch == null || ch === 0 ? "" : `<small>${ch > 0 ? "+" : ""}${num(ch)} since ${fmtDay(m.change_since)}</small>`;
-      return `<li><span>${esc(m.label)}</span><b>${num(m.latest)}<i>${esc(m.unit)}</i></b>${chTxt}</li>`;
+      const chTxt = ch == null || ch === 0 ? "" : `<small>${L("{c} since {d}", { c: (ch > 0 ? "+" : "") + num(ch), d: fmtDay(m.change_since) })}</small>`;
+      return `<li><span>${esc(L(m.label))}</span><b>${num(m.latest)}<i>${esc(m.unit)}</i></b>${chTxt}</li>`;
     }).join("");
     // Height is asked for once: hide it from the list when known (unless "Change" was tapped)
     const listed = metrics.filter((m) => m.key !== "height" || heightCm == null || this._heightEdit);
     if (this._bodyMetric && !listed.some((m) => m.key === this._bodyMetric)) this._bodyMetric = null;
     const sel = this._bodyMetric || "weight";
-    const opts = listed.map((m) => `<option value="${m.key}" ${m.key === sel ? "selected" : ""}>${esc(m.key === "weight" ? "Weight" : m.label)}</option>`).join("");
+    const opts = listed.map((m) => `<option value="${m.key}" ${m.key === sel ? "selected" : ""}>${esc(m.key === "weight" ? L("Weight") : L(m.label))}</option>`).join("");
     const unit = (metrics.find((m) => m.key === sel) || {}).unit || "";
     const recent = (b.recent || []).slice(0, 6).map((r) => {
       const m = metrics.find((x) => x.key === r.metric) || { label: r.metric, unit: "" };
-      return `<li><time>${fmtDay(r.day)}</time><span>${esc(m.label)}</span><b>${num(r.value)} ${esc(m.unit)}</b>
-        <button class="del" data-act="body-del" data-id="${r.id}" aria-label="Remove ${esc(m.label)} on ${fmtDay(r.day)}">\u2715</button></li>`;
+      return `<li><time>${fmtDay(r.day)}</time><span>${esc(L(m.label))}</span><b>${num(r.value)} ${esc(m.unit)}</b>
+        <button class="del" data-act="body-del" data-id="${r.id}" aria-label="${L("Remove {m} on {d}", { m: esc(L(m.label)), d: fmtDay(r.day) })}">\u2715</button></li>`;
     }).join("");
     return `<section class="panel">
-      <h2>Body</h2>
-      ${tiles ? `<ul class="btiles">${tiles}</ul>` : `<p class="hint">Log your body weight and measurements to see how they change alongside your lifts.</p>`}
-      ${this._bodyOutdated ? `<p class="warn">Your tracker is still running an older <code>workout_core.py</code>, so height and BMI can't be saved yet. Replace <code>/config/pyscript_modules/workout_core.py</code> and restart Home Assistant.</p>` : derivedBlock}
+      <h2>${L("Body")}</h2>
+      ${tiles ? `<ul class="btiles">${tiles}</ul>` : `<p class="hint">${L("Log your body weight and measurements to see how they change alongside your lifts.")}</p>`}
+      ${this._bodyOutdated ? `<p class="warn">${L("Your tracker is still running an older")} <code>workout_core.py</code>, so height and BMI can't be saved yet. Replace <code>/config/pyscript_modules/workout_core.py</code> and restart Home Assistant.</p>` : derivedBlock}
       ${chart}
       <div class="bform">
-        <label>Measurement<select id="b-metric">${opts}</select></label>
-        <label>Today's value<span class="unit"><input id="b-value" inputmode="decimal" placeholder="0"><span>${esc(unit)}</span></span></label>
-        <button class="add-btn" data-act="body-add">Save</button>
+        <label>${L("Measurement")}<select id="b-metric">${opts}</select></label>
+        <label>${L("Today's value")}<span class="unit"><input id="b-value" inputmode="decimal" placeholder="0"><span>${esc(unit)}</span></span></label>
+        <button class="add-btn" data-act="body-add">${L("Save")}</button>
       </div>
       ${this._bodyMsg ? `<p class="hint">${esc(this._bodyMsg)}</p>` : ""}
-      ${recent ? `<details class="numbers"><summary>Recent entries</summary><ul class="brecent">${recent}</ul></details>` : ""}
+      ${recent ? `<details class="numbers"><summary>${L("Recent entries")}</summary><ul class="brecent">${recent}</ul></details>` : ""}
     </section>`;
   }
 
@@ -2063,12 +3029,12 @@ class WorkoutOverviewCard extends HTMLElement {
     const ex = wtGet(this._hass, "export");
     const files = ex?.attributes?.files || [];
     const when = ex && ex.state && ex.state !== "unknown" ? new Date(ex.state) : null;
-    const labels = { sets: "All sets", body: "Body measurements", "gym-visits": "Gym visits" };
+    const labels = { sets: L("All sets"), body: L("Body measurements"), "gym-visits": L("Gym visits"), cardio: L("Cardio") };
     return `<section class="panel span exp">
-      <div class="phead"><h2>Export</h2>
-        <button class="add-btn small" data-act="export" ${this._exporting ? "disabled" : ""}>${this._exporting ? "Exporting\u2026" : files.length ? "Export again" : "Export to CSV"}</button></div>
-      <p class="sub">CSV files you can open in Excel, Numbers or Google Sheets.${when ? ` Last export ${when.toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}.` : ""}</p>
-      ${files.length ? `<ul class="files">${files.map((f) => `<li><a href="${esc(f.url)}" download target="_blank" rel="noopener">${esc(labels[f.name] || f.name)}</a><small>${f.rows} rows</small></li>`).join("")}</ul>` : ""}
+      <div class="phead"><h2>${L("Export")}</h2>
+        <button class="add-btn small" data-act="export" ${this._exporting ? "disabled" : ""}>${this._exporting ? L("Exporting\u2026") : files.length ? L("Export again") : L("Export to CSV")}</button></div>
+      <p class="sub">${L("CSV files you can open in Excel, Numbers or Google Sheets.")}${when ? ` ${L("Last export {t}.", { t: when.toLocaleString(locale(), { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) })}` : ""}</p>
+      ${files.length ? `<ul class="files">${files.map((f) => `<li><a href="${esc(f.url)}" download target="_blank" rel="noopener">${esc(labels[f.name] || f.name)}</a><small>${L("{n} rows", { n: f.rows })}</small></li>`).join("")}</ul>` : ""}
     </section>`;
   }
 
@@ -2078,18 +3044,19 @@ class WorkoutOverviewCard extends HTMLElement {
     const target = a.target_days || 5;
     const tiles = (a.this_week || []).map((d, i) => {
       const isToday = d.day === a.today;
-      const cls = d.sets ? "on" : d.future ? "future" : "";
-      const tip = d.sets ? `<b>${fmtDayLong(d.day)}</b><br>${d.sets} sets: ${d.groups.map(title).join(", ")}` : `<b>${fmtDayLong(d.day)}</b><br>${d.future ? "Coming up" : "Rest day"}`;
-      return `<li class="${cls} ${isToday ? "today" : ""}" data-tip="${esc(tip)}">
-        <span class="dow">${DOW[i]}</span>
-        <span class="dot">${d.sets ? d.sets : ""}</span>
-        <span class="gs">${d.groups.slice(0, 3).map((g) => esc(title(g))).join("<br>")}</span>
+      const cls = d.sets || d.cardio ? "on" : d.future ? "future" : "";
+      const what = [d.sets ? L("{n} sets: {g}", { n: d.sets, g: d.groups.map(gname).join(", ") }) : "", d.cardio ? L("{m} min cardio", { m: d.cardio }) : ""].filter(Boolean).join("<br>");
+      const tip = `<b>${fmtDayLong(d.day)}</b><br>${what || (d.future ? L("Coming up") : L("Rest day"))}`;
+      return `<li class="${cls} ${isToday ? "today" : ""} ${d.cardio && !d.sets ? "conly" : ""}" data-tip="${esc(tip)}">
+        <span class="dow">${dow(i)}</span>
+        <span class="dot">${d.sets ? d.sets : d.cardio ? `${d.cardio}'` : ""}</span>
+        <span class="gs">${[...d.groups.slice(0, d.cardio ? 2 : 3).map((g) => esc(gname(g))), ...(d.cardio ? [L("Cardio")] : [])].join("<br>")}</span>
       </li>`;
     }).join("");
     const left = Math.max(target - done, 0);
     return `<header class="week">
-      <h1><b>${done}</b><span> of ${target} workouts this week</span></h1>
-      <p class="sub">${left ? `${left} to go` : "Weekly target reached"} \u00b7 ${a.total_workouts} workouts logged in total</p>
+      <h1><b>${done}</b><span> ${L("of {t} workouts this week", { t: target })}</span></h1>
+      <p class="sub">${left ? L("{n} to go", { n: left }) : L("Weekly target reached")} \u00b7 ${L("{n} workouts logged in total", { n: a.total_workouts })}</p>
       <ol class="days">${tiles}</ol>
     </header>`;
   }
@@ -2097,7 +3064,7 @@ class WorkoutOverviewCard extends HTMLElement {
   // Weight progression --------------------------------------------------
   _progress(a, W) {
     const exs = (a.exercises || []).filter((e) => e.points.length);
-    if (!exs.length) return `<section class="panel span"><h2>Weight progression</h2><p class="hint">Log a few sessions and your progression shows up here.</p></section>`;
+    if (!exs.length) return `<section class="panel span"><h2>${L("Weight progression")}</h2><p class="hint">${L("Log a few sessions and your progression shows up here.")}</p></section>`;
     const order = [...(a.balance || []).map((b) => b.group)];
     exs.forEach((e) => { if (!order.includes(e.group)) order.push(e.group); });
     const groups = order.filter((g) => exs.some((e) => e.group === g));
@@ -2107,18 +3074,18 @@ class WorkoutOverviewCard extends HTMLElement {
       this._ex = this._grp === "all" ? inGroup[0].name : "all";
     }
     const filters = `<div class="filters">
-        <label>Muscle group<select id="grp-pick">
-          <option value="all" ${this._grp === "all" ? "selected" : ""}>All groups</option>
-          ${groups.map((g) => `<option value="${esc(g)}" ${g === this._grp ? "selected" : ""}>${esc(title(g))}</option>`).join("")}
+        <label>${L("Muscle group")}<select id="grp-pick">
+          <option value="all" ${this._grp === "all" ? "selected" : ""}>${L("All groups")}</option>
+          ${groups.map((g) => `<option value="${esc(g)}" ${g === this._grp ? "selected" : ""}>${esc(gname(g))}</option>`).join("")}
         </select></label>
-        <label>Exercise<select id="ex-pick">
-          <option value="all" ${this._ex === "all" ? "selected" : ""}>All exercises (compare)</option>
+        <label>${L("Exercise")}<select id="ex-pick">
+          <option value="all" ${this._ex === "all" ? "selected" : ""}>${L("All exercises (compare)")}</option>
           ${inGroup.map((e) => `<option value="${esc(e.name)}" ${e.name === this._ex ? "selected" : ""}>${esc(e.name)}</option>`).join("")}
         </select></label>
       </div>`;
     const body = this._ex === "all" ? this._progressMulti(inGroup, W) : this._progressOne(inGroup.find((e) => e.name === this._ex), W);
     return `<section class="panel span">
-      <h2>Weight progression</h2>
+      <h2>${L("Weight progression")}</h2>
       ${filters}
       ${body}
     </section>`;
@@ -2129,10 +3096,10 @@ class WorkoutOverviewCard extends HTMLElement {
     const bw = pts.every((p) => !p.top);
     const col = SERIES[this._dark ? "dark" : "light"];
     const series = bw
-      ? [{ label: "Reps (bodyweight)", color: col.weight, vals: pts.map((p) => p.reps), unit: " reps" }]
+      ? [{ label: L("Reps (bodyweight)"), color: col.weight, vals: pts.map((p) => p.reps), unit: ` ${L("reps")}` }]
       : [
-          { label: "Working weight", color: col.weight, vals: pts.map((p) => p.top), unit: " kg" },
-          { label: "Estimated max", color: col.max, vals: pts.map((p) => p.strength), unit: " kg" },
+          { label: L("Working weight"), color: col.weight, vals: pts.map((p) => p.top), unit: " kg" },
+          { label: L("Estimated max"), color: col.max, vals: pts.map((p) => p.strength), unit: " kg" },
         ];
     const H = 220, padL = 40, padR = 52, padT = 12, padB = 26;
     const all = series.flatMap((s) => s.vals);
@@ -2151,7 +3118,7 @@ class WorkoutOverviewCard extends HTMLElement {
         top: y(Math.max(...series.map((s) => s.vals[i]))),
         html: `<b>${fmtDayLong(p.day)}</b><br>` +
           series.map((s) => `<span class="sw" style="background:${s.color}"></span>${s.label}: <b>${num(s.vals[i])}${s.unit}</b>`).join("<br>") +
-          (bw ? "" : `<br><span class="mute">Top set ${num(p.top)} kg \u00d7 ${p.reps}, ${p.sets} sets</span>`),
+          (bw ? "" : `<br><span class="mute">${L("Top set {w} kg \u00d7 {r}, {n} sets", { w: num(p.top), r: p.reps, n: p.sets })}</span>`),
       })),
     };
     const grid = ticks.map((t) => `<line x1="${padL}" x2="${W - padR}" y1="${y(t)}" y2="${y(t)}" class="gl"/>
@@ -2170,16 +3137,16 @@ class WorkoutOverviewCard extends HTMLElement {
     }).join("");
     const first = series[0].vals[0], last = series[0].vals[n - 1];
     const delta = last - first;
-    const what = bw ? "Reps" : "Working weight";
-    const summary = n <= 1 ? "One session so far"
-      : delta === 0 ? `${what} unchanged over ${n} sessions`
-      : `${what} ${delta > 0 ? "up" : "down"} ${num(Math.abs(delta))}${series[0].unit} over ${n} sessions`;
+    const what = bw ? L("Reps") : L("Working weight");
+    const summary = n <= 1 ? L("One session so far")
+      : delta === 0 ? L("{what} unchanged over {n} sessions", { what, n })
+      : L(delta > 0 ? "{what} up {d} over {n} sessions" : "{what} down {d} over {n} sessions", { what, n, d: num(Math.abs(delta)) + series[0].unit });
     const table = pts.slice().reverse().map((p) => `<tr><td>${fmtDayLong(p.day)}</td><td>${bw ? "bw" : num(p.top) + " kg"} \u00d7 ${p.reps}</td><td>${p.sets}</td><td>${bw ? "\u2013" : num(p.strength) + " kg"}</td></tr>`).join("");
     return `<p class="sub">${esc(ex.name)}: ${summary}</p>
       ${series.length > 1 ? `<ul class="legend">${series.map((s) => `<li><i style="background:${s.color}"></i>${s.label}</li>`).join("")}</ul>` : ""}
       ${this._lineSvg(W, H, padT, padB, grid + xl, lines, `${ex.name}: ${summary}`)}
-      <details class="numbers"><summary>Show the numbers</summary>
-        <table><thead><tr><th>Session</th><th>Top set</th><th>Sets</th><th>Est. max</th></tr></thead><tbody>${table}</tbody></table>
+      <details class="numbers"><summary>${L("Show the numbers")}</summary>
+        <table><thead><tr><th>${L("Session")}</th><th>${L("Top set")}</th><th>${L("Sets")}</th><th>${L("Est. max")}</th></tr></thead><tbody>${table}</tbody></table>
       </details>`;
   }
 
@@ -2201,7 +3168,7 @@ class WorkoutOverviewCard extends HTMLElement {
       };
     });
     const days = [...new Set(series.flatMap((s) => s.pts.map((p) => p.day)))].sort();
-    if (!days.length) return `<p class="hint">No sessions yet in this group.</p>`;
+    if (!days.length) return `<p class="hint">${L("No sessions yet in this group.")}</p>`;
     const H = 240, padL = 44, padR = 16, padT = 12, padB = 26;
     const t0 = pd(days[0]).getTime(), t1 = pd(days[days.length - 1]).getTime();
     const x = (d) => (t1 === t0 ? padL + (W - padL - padR) / 2 : padL + ((pd(d).getTime() - t0) / (t1 - t0)) * (W - padL - padR));
@@ -2234,7 +3201,7 @@ class WorkoutOverviewCard extends HTMLElement {
     };
     const legend = series.map((s) => {
       const last = s.pts[s.pts.length - 1];
-      return `<li><button data-act="pick-ex" data-name="${esc(s.name)}" title="Show ${esc(s.name)} on its own">
+      return `<li><button data-act="pick-ex" data-name="${esc(s.name)}" title="${L("Show {ex} on its own", { ex: esc(s.name) })}">
         <i style="background:${s.color}"></i><span>${esc(s.name)}</span><b>${s.pts.length > 1 ? pct(last.v) : "new"}</b></button></li>`;
     }).join("");
     const table = series.map((s) => {
@@ -2242,13 +3209,13 @@ class WorkoutOverviewCard extends HTMLElement {
       const fmt = (p) => (s.bw ? `${p.raw.reps} reps` : `${num(p.raw.top)} kg, max ${num(p.raw.strength)}`);
       return `<tr><td>${esc(s.name)}</td><td>${fmtDay(f.day)}: ${fmt(f)}</td><td>${fmtDay(l.day)}: ${fmt(l)}</td><td>${pct(l.v)}</td></tr>`;
     }).join("");
-    const label = this._grp === "all" ? "all groups" : title(this._grp);
-    const note = list.length > MAX ? ` Showing your ${MAX} most-trained exercises; pick a muscle group to see the rest.` : "";
-    return `<p class="sub">Change in estimated max since each exercise's first session (${esc(label)}). Tap a name to see it on its own.${note}</p>
-      ${this._lineSvg(W, H, padT, padB, grid + xl, lines, `Progression of ${series.length} exercises in ${label}`)}
+    const label = this._grp === "all" ? L("all groups") : gname(this._grp);
+    const note = list.length > MAX ? ` ${L("Showing your {n} most-trained exercises; pick a muscle group to see the rest.", { n: MAX })}` : "";
+    return `<p class="sub">${L("Change in estimated max since each exercise's first session ({g}). Tap a name to see it on its own.", { g: esc(label) })}${note}</p>
+      ${this._lineSvg(W, H, padT, padB, grid + xl, lines, L("Progression of {n} exercises in {g}", { n: series.length, g: label }))}
       <ul class="mlegend">${legend}</ul>
-      <details class="numbers"><summary>Show the numbers</summary>
-        <table><thead><tr><th>Exercise</th><th>First</th><th>Latest</th><th>Change</th></tr></thead><tbody>${table}</tbody></table>
+      <details class="numbers"><summary>${L("Show the numbers")}</summary>
+        <table><thead><tr><th>${L("Exercise")}</th><th>${L("First")}</th><th>${L("Latest")}</th><th>${L("Change")}</th></tr></thead><tbody>${table}</tbody></table>
       </details>`;
   }
 
@@ -2299,8 +3266,8 @@ class WorkoutOverviewCard extends HTMLElement {
     const bars = weeks.map((w, i) => {
       const cx = padL + bw * i + bw / 2;
       const h = Math.max(0, y(0) - y(w.sets));
-      const groups = Object.entries(w.by_group).sort((p, q) => q[1] - p[1]).map(([g, c]) => `${title(g)} ${c}`).join(", ");
-      const tip = `<b>Week of ${fmtDay(w.start)}</b><br>${w.sets} sets in ${w.workouts} workout${w.workouts === 1 ? "" : "s"}${groups ? `<br><span class="mute">${groups}</span>` : ""}`;
+      const groups = Object.entries(w.by_group).sort((p, q) => q[1] - p[1]).map(([g, c]) => `${gname(g)} ${c}`).join(", ");
+      const tip = `<b>${L("Week of {d}", { d: fmtDay(w.start) })}</b><br>${L((w.lifts ?? w.workouts) === 1 ? "{s} sets in 1 workout" : "{s} sets in {n} workouts", { s: w.sets, n: w.lifts ?? w.workouts })}${groups ? `<br><span class="mute">${groups}</span>` : ""}`;
       const isLast = i === weeks.length - 1;
       const r = Math.min(4, barW / 2, h);
       const bar = w.sets
@@ -2310,12 +3277,12 @@ class WorkoutOverviewCard extends HTMLElement {
         ${isLast && w.sets ? `<text x="${cx}" y="${y(w.sets) - 6}" class="endl" text-anchor="middle">${w.sets}</text>` : ""}</g>`;
     }).join("");
     const grid = ticks.map((t) => `<line x1="${padL}" x2="${W}" y1="${y(t)}" y2="${y(t)}" class="gl"/><text x="${padL - 6}" y="${y(t) + 4}" class="ax" text-anchor="end">${t}</text>`).join("");
-    const xl = weeks.length ? `<text x="${padL + bw / 2}" y="${H - 5}" class="ax" text-anchor="start">${fmtDay(weeks[0].start)}</text><text x="${W}" y="${H - 5}" class="ax" text-anchor="end">This week</text>` : "";
+    const xl = weeks.length ? `<text x="${padL + bw / 2}" y="${H - 5}" class="ax" text-anchor="start">${fmtDay(weeks[0].start)}</text><text x="${W}" y="${H - 5}" class="ax" text-anchor="end">${L("This week")}</text>` : "";
 
     return `<section class="panel">
-      <h2>Sets per week</h2>
-      <p class="sub">${avg ? `About ${avg} sets in an active week` : "No sets logged in the last 12 weeks"}</p>
-      <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Sets per week for the last ${weeks.length} weeks">${grid}${bars}${xl}</svg>
+      <h2>${L("Sets per week")}</h2>
+      <p class="sub">${avg ? L("About {n} sets in an active week", { n: avg }) : L("No sets logged in the last 12 weeks")}</p>
+      <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="${L("Sets per week for the last {n} weeks", { n: weeks.length })}">${grid}${bars}${xl}</svg>
     </section>`;
   }
 
@@ -2331,10 +3298,10 @@ class WorkoutOverviewCard extends HTMLElement {
       const wk = Math.floor(i / 7), dw = i % 7;
       const b = bin(d.sets);
       const fill = b < 0 ? "var(--wc-sunk)" : ramp[b];
-      const tip = `<b>${fmtDayLong(d.day)}</b><br>${d.sets ? `${d.sets} sets: ${d.groups.map(title).join(", ")}` : "Rest day"}`;
+      const tip = `<b>${fmtDayLong(d.day)}</b><br>${d.sets ? L("{n} sets: {g}", { n: d.sets, g: d.groups.map(gname).join(", ") }) : L("Rest day")}`;
       return `<rect x="${labW + wk * (cell + gap)}" y="${dw * (cell + gap)}" width="${cell}" height="${cell}" rx="3" fill="${fill}" ${d.day === a.today ? 'class="todaycell"' : ""} data-tip="${esc(tip)}"/>`;
     }).join("");
-    const labels = [0, 2, 4].map((dw) => `<text x="0" y="${dw * (cell + gap) + cell - 2}" class="ax">${DOW[dw]}</text>`).join("");
+    const labels = [0, 2, 4].map((dw) => `<text x="0" y="${dw * (cell + gap) + cell - 2}" class="ax">${dow(dw)}</text>`).join("");
     // month labels: one per month start; drop a label crowded by the next one
     const starts = [];
     let lastM = -1;
@@ -2344,13 +3311,13 @@ class WorkoutOverviewCard extends HTMLElement {
       if (m !== lastM) { starts.push({ wk, m }); lastM = m; }
     }
     const months = starts.filter((s0, k) => !starts[k + 1] || starts[k + 1].wk - s0.wk >= 3)
-      .map((s0) => `<text x="${labW + s0.wk * (cell + gap)}" y="${7 * (cell + gap) + 14}" class="ax">${MONTHS[s0.m]}</text>`);
+      .map((s0) => `<text x="${labW + s0.wk * (cell + gap)}" y="${7 * (cell + gap) + 14}" class="ax">${mon(s0.m)}</text>`);
     const trained = cal.filter((d) => d.sets).length;
-    const legend = `<div class="scale"><span>Fewer sets</span>${ramp.map((c) => `<i style="background:${c}"></i>`).join("")}<span>More</span></div>`;
+    const legend = `<div class="scale"><span>${L("Fewer sets")}</span>${ramp.map((c) => `<i style="background:${c}"></i>`).join("")}<span>${L("More")}</span></div>`;
     return `<section class="panel">
-      <h2>Consistency</h2>
-      <p class="sub">${trained} training days in the last ${nW} weeks</p>
-      <svg width="${labW + nW * (cell + gap)}" height="${H}" role="img" aria-label="Training calendar, ${trained} training days">${labels}${cells}${months.join("")}</svg>
+      <h2>${L("Consistency")}</h2>
+      <p class="sub">${L("{n} training days in the last {w} weeks", { n: trained, w: nW })}</p>
+      <svg width="${labW + nW * (cell + gap)}" height="${H}" role="img" aria-label="${L("Training calendar, {n} training days", { n: trained })}">${labels}${cells}${months.join("")}</svg>
       ${legend}
     </section>`;
   }
@@ -2361,17 +3328,17 @@ class WorkoutOverviewCard extends HTMLElement {
     const max = Math.max(1, ...rows.map((r) => r.sets));
     const col = SERIES[this._dark ? "dark" : "light"].weight;
     const row = (r) => {
-      const when = r.days == null ? "not yet" : r.days === 0 ? "today" : r.days === 1 ? "yesterday" : `${r.days} days ago`;
-      return `<li data-tip="${esc(`<b>${title(r.group)}</b><br>${r.sets} sets in the last 4 weeks<br><span class='mute'>Last trained ${when}</span>`)}">
-        <span class="bn">${esc(title(r.group))}</span>
+      const when = r.days == null ? L("not yet") : r.days === 0 ? L("today") : r.days === 1 ? L("yesterday") : L("{n} days ago", { n: r.days });
+      return `<li data-tip="${esc(`<b>${gname(r.group)}</b><br>${L("{n} sets in the last 4 weeks", { n: r.sets })}<br><span class='mute'>${L("Last trained {w}", { w: when })}</span>`)}">
+        <span class="bn">${esc(gname(r.group))}</span>
         <span class="track"><i style="width:${(r.sets / max) * 100}%;background:${col}"></i></span>
         <span class="bv">${r.sets}</span>
         <span class="bd">${when}</span>
       </li>`;
     };
     return `<section class="panel">
-      <h2>Muscle balance</h2>
-      <p class="sub">Sets in the last 4 weeks, and when you last trained each group</p>
+      <h2>${L("Muscle balance")}</h2>
+      <p class="sub">${L("Sets in the last 4 weeks, and when you last trained each group")}</p>
       <ul class="bars">${rows.filter((r) => !r.addon).map(row).join("")}</ul>
       <ul class="bars addon">${rows.filter((r) => r.addon).map(row).join("")}</ul>
     </section>`;
@@ -2380,12 +3347,12 @@ class WorkoutOverviewCard extends HTMLElement {
   // Personal bests ----------------------------------------------------
   _bests(a) {
     const prs = a.prs || [];
-    if (!prs.length) return `<section class="panel"><h2>Personal bests</h2><p class="hint">Your heaviest lifts will collect here.</p></section>`;
+    if (!prs.length) return `<section class="panel"><h2>${L("Personal bests")}</h2><p class="hint">${L("Your heaviest lifts will collect here.")}</p></section>`;
     return `<section class="panel">
-      <h2>Personal bests</h2>
-      <p class="sub">Heaviest working weight per exercise, most recent first</p>
+      <h2>${L("Personal bests")}</h2>
+      <p class="sub">${L("Heaviest working weight per exercise, most recent first")}</p>
       <ol class="prs">${prs.map((p) => `<li>
-        <span class="pn">${esc(p.name)}${p.new ? `<em>New</em>` : ""}</span>
+        <span class="pn">${esc(p.name)}${p.new ? `<em>${L("New")}</em>` : ""}</span>
         <b>${num(p.weight)} kg</b>
         <time>${fmtDay(p.weight_day)}</time>
       </li>`).join("")}</ol>
@@ -2632,6 +3599,27 @@ path.past { opacity: .85; }
 .agoal i, .sbar { background: var(--lamp); fill: var(--lamp); }
 .agoal i.met, .sbar.met { background: var(--presence); fill: var(--presence); }
 .goalline { stroke: #7a8696; }
+
+/* ---- cardio ---- */
+.cbar { fill: var(--presence); }
+.cbar.past { opacity: .75; }
+.goal-l { stroke: var(--lamp); stroke-dasharray: 4 4; stroke-width: 1; }
+.goal-t { fill: var(--lamp); }
+.cacts { list-style: none; margin: 10px 0 4px; padding: 0; }
+.cacts li { display: flex; flex-direction: column; gap: 2px; padding: 8px 0; font-size: 14px; }
+.cacts li + li { border-top: 1px solid var(--line); }
+.cacts li > span:first-child { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.cacts b { font-weight: 500; }
+.cacts small, .cacts .cl { color: var(--muted); font-size: 13px; }
+.cacts em { font-style: normal; margin-left: 6px; }
+.cacts .pos { color: var(--presence); } .cacts .neg { color: var(--guest); }
+.ctoday { list-style: none; margin: 4px 0; padding: 0; }
+.ctoday li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 0; font-size: 14px; }
+.ctoday span { color: var(--muted); }
+.ctoday b { color: var(--text); font-weight: 500; margin-right: 4px; }
+.mday.c .pl { box-shadow: 0 0 0 2px var(--presence); }
+.mday.conly .pl { background: rgba(92,200,180,.25) !important; }
+.days li.conly .dot { background: rgba(92,200,180,.25) !important; color: var(--text) !important; font-size: 11px; }
 `;
 
 if (!customElements.get("workout-overview-card")) customElements.define("workout-overview-card", WorkoutOverviewCard);
@@ -2648,23 +3636,24 @@ if (!window.customCards.some((c) => c.type === "workout-overview-card")) window.
 
 const WD = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const WD1 = ["M", "T", "W", "T", "F", "S", "S"];
+const WD1_NL = ["M", "D", "W", "D", "V", "Z", "Z"];
 
 /** Same wording as the server's describe(), for the live preview in the form. */
 function medDescribe(s) {
-  if (s.repeat === "none") return "As needed";
+  if (s.repeat === "none") return L("As needed");
   const t = [...new Set(s.times.filter(Boolean))].sort();
-  if (!t.length) return "Add a time";
-  const at = " at " + (t.length > 1 ? t.slice(0, -1).join(", ") + " and " + t[t.length - 1] : t[0]);
+  if (!t.length) return L("Add a time");
+  const at = " " + L("at {t}", { t: t.length > 1 ? t.slice(0, -1).join(", ") + ` ${L("and")} ` + t[t.length - 1] : t[0] });
   let base;
-  if (s.repeat === "daily") base = s.every > 1 ? `Every ${s.every} days` : "Every day";
+  if (s.repeat === "daily") base = s.every > 1 ? L("Every {n} days", { n: s.every }) : L("Every day");
   else {
     const d = [...s.days].sort();
-    if (!d.length) return "Pick at least one day";
-    const names = d.join() === "0,1,2,3,4" ? "weekday" : d.map((x) => WD[x]).join(", ");
-    base = (s.every > 1 ? `Every ${s.every} weeks` : "Every week") + ` on ${names}`;
-    if (d.length === 7 && s.every === 1) base = "Every day";
+    if (!d.length) return L("Pick at least one day");
+    const names = d.join() === "0,1,2,3,4" ? L("weekdays") : d.map((x) => dow(x)).join(", ");
+    base = L(s.every > 1 ? "Every {n} weeks on {d}" : "Every week on {d}", { n: s.every, d: names });
+    if (d.length === 7 && s.every === 1) base = L("Every day");
   }
-  return base + at + (s.end ? `, until ${fmtDay(s.end)}` : "");
+  return base + at + (s.end ? `, ${L("until {d}", { d: fmtDay(s.end) })}` : "");
 }
 
 const blankMed = () => ({
@@ -2760,8 +3749,8 @@ class WorkoutMedsCard extends HTMLElement {
         const status = row.querySelector("[data-a=dose-status].sel")?.dataset.v || "taken";
         const at = row.querySelector("input[type=time]")?.value || null;
         const done = () => { this._edit = null; this._render(); };
-        if (b.dataset.log) this._do("workout_med_update", { log_id: Number(b.dataset.log), status, at }, "Saved.").then((ok) => ok && done());
-        else this._do("workout_med_log", { med_id: Number(b.dataset.id), status, due: b.dataset.due, at }, "Saved.").then((ok) => ok && done());
+        if (b.dataset.log) this._do("workout_med_update", { log_id: Number(b.dataset.log), status, at }, L("Saved.")).then((ok) => ok && done());
+        else this._do("workout_med_log", { med_id: Number(b.dataset.id), status, due: b.dataset.due, at }, L("Saved.")).then((ok) => ok && done());
         break;
       }
       case "times-n": {
@@ -2773,7 +3762,7 @@ class WorkoutMedsCard extends HTMLElement {
       case "undo": this._edit = null; this._do("workout_med_undo", { log_id: Number(b.dataset.log) }); break;
       case "log-now": {
         const m = (d.meds || []).find((x) => x.id === Number(b.dataset.id));
-        this._do("workout_med_log", { med_id: Number(b.dataset.id), status: "taken" }, `Logged ${m ? m.name : "it"}.`);
+        this._do("workout_med_log", { med_id: Number(b.dataset.id), status: "taken" }, L("Logged {m}.", { m: m ? m.name : L("it") }));
         break;
       }
       case "add": this._form = blankMed(); this._err = ""; this._render(); this._focus("m-name"); break;
@@ -2792,7 +3781,7 @@ class WorkoutMedsCard extends HTMLElement {
       case "save": this._save(); break;
       case "pause": this._do("workout_med_pause", { med_id: Number(b.dataset.id), paused: b.dataset.on !== "1" }); break;
       case "delete":
-        if (confirm(`Delete ${b.dataset.name}? Its history is kept.`)) this._do("workout_med_delete", { med_id: Number(b.dataset.id) });
+        if (confirm(L("Delete {m}? Its history is kept.", { m: b.dataset.name }))) this._do("workout_med_delete", { med_id: Number(b.dataset.id) });
         break;
       case "kind": f.kind = b.dataset.v; this._render(); break;
       case "repeat": f.schedule.repeat = b.dataset.v; this._render(); break;
@@ -2841,14 +3830,14 @@ class WorkoutMedsCard extends HTMLElement {
 
   async _save() {
     const f = this._form;
-    if (!f.name.trim()) { this._err = "Give it a name."; this._render(); this._focus("m-name"); return; }
+    if (!f.name.trim()) { this._err = L("Give it a name."); this._render(); this._focus("m-name"); return; }
     const s = f.schedule;
     const schedule = { repeat: s.repeat, every: s.every, days: s.days, times: s.times.filter(Boolean),
       start: s.start, end: s.end };
     const ok = await this._do("workout_med_save", {
       ...(f.med_id ? { med_id: f.med_id } : {}), name: f.name.trim(), kind: f.kind, dose: f.dose, note: f.note,
       echo: f.echo, schedule,
-    }, f.med_id ? `Saved ${f.name.trim()}.` : `Added ${f.name.trim()}.`);
+    }, f.med_id ? L("Saved {m}.", { m: f.name.trim() }) : L("Added {name}.", { name: f.name.trim() }));
     if (ok) { this._form = null; this._render(); }
   }
 
@@ -2860,7 +3849,7 @@ class WorkoutMedsCard extends HTMLElement {
     const d = this._data();
     if (!d) {
       wtBody(this, CSS + MEDS_CSS).innerHTML = `<div class="wc"><div class="card"><p class="hint">${
-        WT.integration(this._hass) ? "Loading\u2026" : "Medication reminders need the Workout Tracker integration."}</p></div></div>`;
+        WT.integration(this._hass) ? L("Loading\u2026") : "Medication reminders need the Workout Tracker integration."}</p></div></div>`;
       return;
     }
     wtBody(this, CSS + MEDS_CSS).innerHTML = `<div class="wc"><div class="mcols">
@@ -2876,7 +3865,7 @@ class WorkoutMedsCard extends HTMLElement {
   _flash() {
     if (!this._msg && !this._err) return "";
     return `<div class="flash ${this._err ? "err" : ""}" role="status"><span>${esc(this._err || this._msg)}</span>
-      <button class="x" data-a="dismiss" aria-label="Dismiss">\u00D7</button></div>`;
+      <button class="x" data-a="dismiss" aria-label="${L("Dismiss")}">\u00D7</button></div>`;
   }
 
   _today(d) {
@@ -2884,7 +3873,7 @@ class WorkoutMedsCard extends HTMLElement {
     const idx = Math.min(this._dayIdx, days.length - 1);
     const view = days[idx];
     const isToday = idx === 0;
-    const label = isToday ? "Today" : idx === 1 ? "Yesterday" : fmtDayLong(view.day);
+    const label = isToday ? L("Today") : idx === 1 ? L("Yesterday") : fmtDayLong(view.day);
     const sched = view.doses.filter((x) => !x.as_needed);
     const loggedAN = view.doses.filter((x) => x.as_needed);
     const asNeeded = d.meds.filter((m) => m.schedule.repeat === "none" && !m.paused);
@@ -2895,43 +3884,43 @@ class WorkoutMedsCard extends HTMLElement {
         const st = x.status === "skipped" ? "skipped" : "taken";
         const at = x.at || (isToday && x.status === "due" ? `${String(new Date().getHours()).padStart(2, "0")}:${String(new Date().getMinutes()).padStart(2, "0")}` : x.time);
         return `<li class="dose dedit"><time>${esc(x.time)}</time><div class="what">${what}
-          <div class="erow"><div class="seg"><button class="${st === "taken" ? "sel" : ""}" data-a="dose-status" data-v="taken">Taken</button><button class="${st === "skipped" ? "sel" : ""}" data-a="dose-status" data-v="skipped">Skipped</button></div>
-            <label class="inl">at <input type="time" value="${esc(at)}" aria-label="Taken at"></label></div>
-          <div class="erow"><button class="btn solid" data-a="dose-save" data-id="${x.med_id}" data-due="${esc(x.due || "")}" ${x.log_id ? `data-log="${x.log_id}"` : ""}>Save</button>
-            ${x.log_id ? `<button class="link quiet" data-a="undo" data-log="${x.log_id}">${x.as_needed ? "Delete" : "Clear"}</button>` : ""}
-            <button class="link quiet" data-a="dose-cancel">Cancel</button></div></div></li>`;
+          <div class="erow"><div class="seg"><button class="${st === "taken" ? "sel" : ""}" data-a="dose-status" data-v="taken">${L("Taken")}</button><button class="${st === "skipped" ? "sel" : ""}" data-a="dose-status" data-v="skipped">${L("Skipped")}</button></div>
+            <label class="inl">${L("at")} <input type="time" value="${esc(at)}" aria-label="${L("Taken at")}"></label></div>
+          <div class="erow"><button class="btn solid" data-a="dose-save" data-id="${x.med_id}" data-due="${esc(x.due || "")}" ${x.log_id ? `data-log="${x.log_id}"` : ""}>${L("Save")}</button>
+            ${x.log_id ? `<button class="link quiet" data-a="undo" data-log="${x.log_id}">${x.as_needed ? L("Delete") : L("Clear")}</button>` : ""}
+            <button class="link quiet" data-a="dose-cancel">${L("Cancel")}</button></div></div></li>`;
       }
       let right;
-      const edit = `<button class="link quiet" data-a="dose-edit" data-key="${esc(key)}">Edit</button>`;
-      if (x.status === "taken") right = `<span class="st ok">\u2713 Taken ${esc(x.at || "")}</span>${edit}`;
-      else if (x.status === "skipped") right = `<span class="st">Skipped</span>${edit}`;
-      else right = `${x.status === "missed" ? `<span class="st bad">Missed</span>` : ""}
-        <button class="btn ${x.status === "due" ? "solid" : ""}" data-a="taken" data-id="${x.med_id}" data-due="${esc(x.due)}">Taken</button>
-        <button class="link quiet" data-a="skip" data-id="${x.med_id}" data-due="${esc(x.due)}">Skip</button>${edit}`;
+      const edit = `<button class="link quiet" data-a="dose-edit" data-key="${esc(key)}">${L("Edit")}</button>`;
+      if (x.status === "taken") right = `<span class="st ok">\u2713 ${L("Taken")} ${esc(x.at || "")}</span>${edit}`;
+      else if (x.status === "skipped") right = `<span class="st">${L("Skipped")}</span>${edit}`;
+      else right = `${x.status === "missed" ? `<span class="st bad">${L("Missed")}</span>` : ""}
+        <button class="btn ${x.status === "due" ? "solid" : ""}" data-a="taken" data-id="${x.med_id}" data-due="${esc(x.due)}">${L("Taken")}</button>
+        <button class="link quiet" data-a="skip" data-id="${x.med_id}" data-due="${esc(x.due)}">${L("Skip")}</button>${edit}`;
       return `<li class="dose ${x.status}"><time>${esc(x.time)}</time><div class="what">${what}</div><div class="acts">${right}</div></li>`;
     };
     const pct = d.adherence;
-    const echo = !d.echo ? "No Echo found, so reminders go to your phone only."
-      : `Reminders go to your phone${d.phone ? "" : " (no phone found)"}, and to the Echo${d.echo.via === "say" ? " in the house personality" : ""} when you're home.`;
+    const echo = !d.echo ? L("No Echo found, so reminders go to your phone only.")
+      : L(d.echo.via === "say" ? "Reminders go to your phone{p}, and to the Echo in the house personality when you're home." : "Reminders go to your phone{p}, and to the Echo when you're home.", { p: d.phone ? "" : L(" (no phone found)") });
     return `<div class="thead">
-        <div class="dnav"><button data-a="day-prev" ${idx >= days.length - 1 ? "disabled" : ""} aria-label="Previous day">\u2039</button>
+        <div class="dnav"><button data-a="day-prev" ${idx >= days.length - 1 ? "disabled" : ""} aria-label="${L("Previous day")}">\u2039</button>
           <h2>${esc(label)}</h2>
-          <button data-a="day-next" ${isToday ? "disabled" : ""} aria-label="Next day">\u203A</button></div>
-        ${pct != null ? `<span class="pill" title="Doses taken of all scheduled doses, last 30 days">${pct}% taken \u00B7 30 days</span>` : ""}</div>
+          <button data-a="day-next" ${isToday ? "disabled" : ""} aria-label="${L("Next day")}">\u203A</button></div>
+        ${pct != null ? `<span class="pill" title="${L("Doses taken of all scheduled doses, last 30 days")}">${L("{p}% taken \u00b7 30 days", { p: pct })}</span>` : ""}</div>
       ${this._flash()}
-      ${sched.length ? `<ol class="doses">${sched.map(row).join("")}</ol>` : `<p class="hint">${d.meds.length ? `Nothing scheduled ${isToday ? "today" : "that day"}.` : "No medicines yet. Add your first one."}</p>`}
-      ${loggedAN.length && !isToday ? `<h3>As needed</h3><ol class="doses">${loggedAN.map(row).join("")}</ol>` : ""}
-      ${asNeeded.length && isToday ? `<h3>As needed</h3><ul class="an">${asNeeded.map((m) => {
+      ${sched.length ? `<ol class="doses">${sched.map(row).join("")}</ol>` : `<p class="hint">${d.meds.length ? (isToday ? L("Nothing scheduled today.") : L("Nothing scheduled that day.")) : L("No medicines yet. Add your first one.")}</p>`}
+      ${loggedAN.length && !isToday ? `<h3>${L("As needed")}</h3><ol class="doses">${loggedAN.map(row).join("")}</ol>` : ""}
+      ${asNeeded.length && isToday ? `<h3>${L("As needed")}</h3><ul class="an">${asNeeded.map((m) => {
         const n = loggedAN.filter((x) => x.med_id === m.id);
-        return `<li><div class="what"><b>${esc(m.name)}</b>${m.dose ? ` <span>${esc(m.dose)}</span>` : ""}${n.length ? `<small>Today at ${n.map((x) => `<button class="link quiet tiny" data-a="dose-edit" data-key="log:${x.log_id}">${esc(x.time)}</button>`).join(", ")}</small>` : ""}</div>
-          <button class="btn" data-a="log-now" data-id="${m.id}">Took one</button></li>
+        return `<li><div class="what"><b>${esc(m.name)}</b>${m.dose ? ` <span>${esc(m.dose)}</span>` : ""}${n.length ? `<small>${L("Today at")} ${n.map((x) => `<button class="link quiet tiny" data-a="dose-edit" data-key="log:${x.log_id}">${esc(x.time)}</button>`).join(", ")}</small>` : ""}</div>
+          <button class="btn" data-a="log-now" data-id="${m.id}">${L("Took one")}</button></li>
           ${n.filter((x) => this._edit === `log:${x.log_id}`).map(row).join("")}`;
       }).join("")}</ul>` : ""}
-      <p class="foot">${esc(echo)}${isToday ? "" : " Tap Taken to mark a past dose; Edit to change the time."}</p>`;
+      <p class="foot">${esc(echo)}${isToday ? "" : ` ${L("Tap Taken to mark a past dose; Edit to change the time.")}`}</p>`;
   }
 
   _dots(m) {
-    return `<span class="dots" aria-label="Last 14 days">${m.history.map((h) => {
+    return `<span class="dots" aria-label="${L("Last 14 days")}">${m.history.map((h) => {
       let c = "none";
       if (h.doses) {
         if (h.missed) c = "missed";
@@ -2940,68 +3929,68 @@ class WorkoutMedsCard extends HTMLElement {
         else if (h.taken) c = "part";
         else c = "open";
       }
-      return `<i class="${c}" title="${fmtDayLong(h.day)}: ${h.doses ? `${h.taken} of ${h.doses} taken` : "nothing scheduled"}"></i>`;
+      return `<i class="${c}" title="${fmtDayLong(h.day)}: ${h.doses ? L("{a} of {b} taken", { a: h.taken, b: h.doses }) : L("nothing scheduled")}"></i>`;
     }).join("")}</span>`;
   }
 
   _list(d) {
     const items = d.meds.map((m) => `<li class="${m.paused ? "paused" : ""}">
-      <div class="mhead"><button class="mname" data-a="edit" data-id="${m.id}" title="Edit">${esc(m.name)}</button><span class="tag ${m.kind}">${m.kind === "supplement" ? "Supplement" : "Medication"}</span>
-        ${m.paused ? `<span class="tag">Paused</span>` : ""}
+      <div class="mhead"><button class="mname" data-a="edit" data-id="${m.id}" title="${L("Edit")}">${esc(m.name)}</button><span class="tag ${m.kind}">${m.kind === "supplement" ? L("Supplement") : L("Medication")}</span>
+        ${m.paused ? `<span class="tag">${L("Paused")}</span>` : ""}
         ${m.adherence != null ? `<span class="pct">${m.adherence}%</span>` : ""}</div>
       <p class="sub">${esc([m.dose, m.note].filter(Boolean).join(" \u00B7 "))}</p>
-      <p class="sched">${esc(m.summary)}${m.echo && m.schedule.repeat !== "none" ? "" : m.schedule.repeat !== "none" ? " \u00B7 phone only" : ""}</p>
+      <p class="sched">${esc(nl() ? medDescribe(m.schedule) : m.summary)}${m.echo && m.schedule.repeat !== "none" ? "" : m.schedule.repeat !== "none" ? ` \u00b7 ${L("phone only")}` : ""}</p>
       ${m.schedule.repeat !== "none" ? this._dots(m) : ""}
       <div class="macts">
-        <button class="link" data-a="edit" data-id="${m.id}">Edit medicine & schedule</button>
-        <button class="link quiet" data-a="pause" data-id="${m.id}" data-on="${m.paused ? "1" : "0"}">${m.paused ? "Resume" : "Pause"}</button>
-        <button class="link quiet" data-a="delete" data-id="${m.id}" data-name="${esc(m.name)}">Delete</button>
+        <button class="link" data-a="edit" data-id="${m.id}">${L("Edit medicine & schedule")}</button>
+        <button class="link quiet" data-a="pause" data-id="${m.id}" data-on="${m.paused ? "1" : "0"}">${m.paused ? L("Resume") : L("Pause")}</button>
+        <button class="link quiet" data-a="delete" data-id="${m.id}" data-name="${esc(m.name)}">${L("Delete")}</button>
       </div>
     </li>`).join("");
-    return `<div class="thead"><h2>Medicines & supplements</h2>
-        ${this._form ? "" : `<button class="btn solid" data-a="add">+ Add</button>`}</div>
-      ${items ? `<ul class="meds">${items}</ul>` : `<p class="hint">Add a medicine or supplement, pick when you take it, and you'll get reminders.</p>`}
-      ${items ? `<p class="legend"><i class="taken"></i>taken <i class="part"></i>partly <i class="missed"></i>missed <i class="skipped"></i>skipped</p>` : ""}`;
+    return `<div class="thead"><h2>${L("Medicines & supplements")}</h2>
+        ${this._form ? "" : `<button class="btn solid" data-a="add">+ ${L("Add")}</button>`}</div>
+      ${items ? `<ul class="meds">${items}</ul>` : `<p class="hint">${L("Add a medicine or supplement, pick when you take it, and you'll get reminders.")}</p>`}
+      ${items ? `<p class="legend"><i class="taken"></i>${L("taken")} <i class="part"></i>${L("partly")} <i class="missed"></i>${L("missed")} <i class="skipped"></i>${L("skipped")}</p>` : ""}`;
   }
 
   _formHtml() {
     const f = this._form;
     const s = f.schedule;
     const seg = (act, v, label, on) => `<button class="${on ? "sel" : ""}" data-a="${act}" data-v="${v}" aria-pressed="${on}">${label}</button>`;
-    return `<h2>${f.med_id ? `Edit ${esc(f.name)}` : "Add a medicine or supplement"}</h2>
+    return `<h2>${f.med_id ? L("Edit {m}", { m: esc(f.name) }) : L("Add a medicine or supplement")}</h2>
       ${this._err ? `<p class="ferr">${esc(this._err)}</p>` : ""}
       <div class="f2">
-        <label class="span">Name<input id="m-name" value="${esc(f.name)}" placeholder="e.g. Vitamin D" maxlength="60" autocomplete="off"></label>
-        <div class="span"><span class="lbl">Type</span><div class="seg">${seg("kind", "medication", "Medication", f.kind === "medication")}${seg("kind", "supplement", "Supplement", f.kind === "supplement")}</div></div>
-        <label>Dose<input id="m-dose" value="${esc(f.dose)}" placeholder="1 tablet, 500 mg" maxlength="40" autocomplete="off"></label>
-        <label>Note<input id="m-note" value="${esc(f.note)}" placeholder="with food" maxlength="120" autocomplete="off"></label>
+        <label class="span">${L("Name")}<input id="m-name" value="${esc(f.name)}" placeholder="${L("e.g. Vitamin D")}" maxlength="60" autocomplete="off"></label>
+        <div class="span"><span class="lbl">${L("Type")}</span><div class="seg">${seg("kind", "medication", L("Medication"), f.kind === "medication")}${seg("kind", "supplement", L("Supplement"), f.kind === "supplement")}</div></div>
+        <label>${L("Dose")}<input id="m-dose" value="${esc(f.dose)}" placeholder="${L("1 tablet, 500 mg")}" maxlength="40" autocomplete="off"></label>
+        <label>${L("Note")}<input id="m-note" value="${esc(f.note)}" placeholder="${L("with food")}" maxlength="120" autocomplete="off"></label>
       </div>
       <div class="rec">
-        <span class="lbl">Repeat</span>
-        <div class="seg">${seg("repeat", "daily", "Daily", s.repeat === "daily")}${seg("repeat", "weekly", "Weekly", s.repeat === "weekly")}${seg("repeat", "none", "As needed", s.repeat === "none")}</div>
-        ${s.repeat === "none" ? `<p class="hint">No reminders. Log a dose from Today when you take one.</p>` : `
-          <div class="every">Every <input id="m-every" type="number" min="1" max="365" inputmode="numeric" value="${s.every}"> ${s.repeat === "daily" ? "day(s)" : "week(s)"}</div>
-          ${s.repeat === "weekly" ? `<div class="wdays" role="group" aria-label="Weekdays">${WD1.map((l, i) => `<button class="${s.days.includes(i) ? "sel" : ""}" data-a="day" data-v="${i}" aria-pressed="${s.days.includes(i)}" title="${WD[i]}">${l}</button>`).join("")}</div>` : ""}
-          <span class="lbl">Times a day</span>
-          <div class="seg">${[1, 2, 3, 4].map((n) => seg("times-n", n, n === 1 ? "Once" : n === 2 ? "Twice" : `${n}\u00d7`, s.times.length === n)).join("")}</div>
-          <span class="lbl">At</span>
-          <div class="times">${s.times.map((t, i) => `<span class="time"><input type="time" data-time="${i}" value="${esc(t)}" aria-label="Time ${i + 1}">${s.times.length > 1 ? `<button class="x" data-a="time-del" data-i="${i}" aria-label="Remove this time">\u00D7</button>` : ""}</span>`).join("")}
-            <button class="link" data-a="time-add">+ Add a time</button></div>
+        <span class="lbl">${L("Repeat")}</span>
+        <div class="seg">${seg("repeat", "daily", L("Daily"), s.repeat === "daily")}${seg("repeat", "weekly", L("Weekly"), s.repeat === "weekly")}${seg("repeat", "none", L("As needed"), s.repeat === "none")}</div>
+        ${s.repeat === "none" ? `<p class="hint">${L("No reminders. Log a dose from Today when you take one.")}</p>` : `
+          <div class="every">${L("Every")} <input id="m-every" type="number" min="1" max="365" inputmode="numeric" value="${s.every}"> ${s.repeat === "daily" ? L("day(s)") : L("week(s)")}</div>
+          ${s.repeat === "weekly" ? `<div class="wdays" role="group" aria-label="${L("Weekdays")}">${(nl() ? WD1_NL : WD1).map((l, i) => `<button class="${s.days.includes(i) ? "sel" : ""}" data-a="day" data-v="${i}" aria-pressed="${s.days.includes(i)}" title="${dow(i)}">${l}</button>`).join("")}</div>` : ""}
+          <span class="lbl">${L("Times a day")}</span>
+          <div class="seg">${[1, 2, 3, 4].map((n) => seg("times-n", n, n === 1 ? L("Once") : n === 2 ? L("Twice") : `${n}\u00d7`, s.times.length === n)).join("")}</div>
+          <span class="lbl">${L("At")}</span>
+          <div class="times">${s.times.map((t, i) => `<span class="time"><input type="time" data-time="${i}" value="${esc(t)}" aria-label="${L("Time {n}", { n: i + 1 })}">${s.times.length > 1 ? `<button class="x" data-a="time-del" data-i="${i}" aria-label="${L("Remove this time")}">\u00D7</button>` : ""}</span>`).join("")}
+            <button class="link" data-a="time-add">+ ${L("Add a time")}</button></div>
           <div class="range">
-            <label>Starts<input id="m-start" type="date" value="${esc(s.start)}"></label>
-            <div><span class="lbl">Ends</span><div class="seg">${seg("end", "never", "Never", !s.end)}${seg("end", "on", "On a date", !!s.end)}</div></div>
-            ${s.end ? `<label>Last day<input id="m-end" type="date" value="${esc(s.end)}" min="${esc(s.start)}"></label>` : ""}
+            <label>${L("Starts")}<input id="m-start" type="date" value="${esc(s.start)}"></label>
+            <div><span class="lbl">${L("Ends")}</span><div class="seg">${seg("end", "never", L("Never"), !s.end)}${seg("end", "on", L("On a date"), !!s.end)}</div></div>
+            ${s.end ? `<label>${L("Last day")}<input id="m-end" type="date" value="${esc(s.end)}" min="${esc(s.start)}"></label>` : ""}
           </div>
-          <button class="toggle" data-a="echo" aria-pressed="${f.echo}"><span class="sw ${f.echo ? "on" : ""}"></span>Also say it on the Echo when I'm home</button>`}
+          <button class="toggle" data-a="echo" aria-pressed="${f.echo}"><span class="sw ${f.echo ? "on" : ""}"></span>${L("Also say it on the Echo when I'm home")}</button>`}
       </div>
       <p class="preview" id="m-preview">${esc(medDescribe(s))}</p>
-      <div class="fbtns"><button class="btn solid" data-a="save">${f.med_id ? "Save" : "Add"}</button><button class="link quiet" data-a="cancel">Cancel</button></div>`;
+      <div class="fbtns"><button class="btn solid" data-a="save">${f.med_id ? L("Save") : L("Add")}</button><button class="link quiet" data-a="cancel">${L("Cancel")}</button></div>`;
   }
 
   _recent(d) {
-    return `<details class="recent"><summary>Recent doses</summary><ul>${d.recent.map((l) => `<li>
+    return `<details class="recent"><summary>${L("Recent doses")}</summary><ul>${d.recent.map((l) => `<li>
       <time>${esc(fmtDayLong(l.ts.slice(0, 10)))} ${esc(l.ts.slice(11, 16))}</time><span>${esc(l.name)}</span>
-      <span class="${l.status === "taken" ? "ok" : ""}">${l.status === "taken" ? "taken" : "skipped"}${l.due ? ` (${esc(l.due.slice(11))} dose)` : ""}</span></li>`).join("")}</ul></details>`;
+      <span class="${l.status === "taken" ? "ok" : ""}">${l.status === "taken" ? L("taken") : L("skipped")}${l.due ? ` (${L("{t} dose", { t: esc(l.due.slice(11)) })})` : ""}</span></li>`).join("")}</ul></details>`;
   }
 }
 
@@ -3169,6 +4158,9 @@ main { padding: 22px 32px 40px; min-width: 0; }
 .page.meds { max-width: 1240px; }
 [hidden] { display: none !important; }
 .ver { margin: 28px 0 0; color: var(--faint); font-size: 12px; text-align: center; }
+.ver { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 6px 18px; }
+.ver label { display: inline-flex; align-items: center; gap: 6px; }
+.ver select { font: inherit; color: var(--muted); background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 3px 6px; }
 @media (max-width: 760px) {
   .app { grid-template-columns: 1fr; }
   nav { position: fixed; bottom: 0; left: 0; right: 0; top: auto; height: auto; flex-direction: row; justify-content: space-around;
@@ -3195,8 +4187,10 @@ class WorkoutTrackerPanel extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+    WT_LANG.ha = hass?.locale?.language || hass?.language || WT_LANG.ha;
     this._build();
     WT.ensure(hass);
+    if (this._lang !== WT_LANG.get()) this._relabel();
     this._renderWho();
     this._menu.hass = hass;
     this._workout.hass = hass;
@@ -3216,23 +4210,26 @@ class WorkoutTrackerPanel extends HTMLElement {
     this._built = true;
     this.shadowRoot.innerHTML = `<style>${PANEL_CSS}</style>
       <div class="app">
-        <nav class="tabs" role="tablist" aria-label="Workout tracker">
+        <nav class="tabs" role="tablist" aria-label="${L("Workout tracker")}">
           <span class="logo" aria-hidden="true"><ha-icon icon="mdi:dumbbell"></ha-icon></span>
-          <button role="tab" data-tab="workout"><ha-icon icon="mdi:weight-lifter"></ha-icon><span>Workout</span></button>
-          <button role="tab" data-tab="overview"><ha-icon icon="mdi:chart-timeline-variant"></ha-icon><span>Overview</span></button>
-          <button role="tab" data-tab="meds"><ha-icon icon="mdi:pill"></ha-icon><span>Meds</span></button>
+          <button role="tab" data-tab="workout"><ha-icon icon="mdi:weight-lifter"></ha-icon><span data-l="Workout">${L("Workout")}</span></button>
+          <button role="tab" data-tab="overview"><ha-icon icon="mdi:chart-timeline-variant"></ha-icon><span data-l="Overview">${L("Overview")}</span></button>
+          <button role="tab" data-tab="meds"><ha-icon icon="mdi:pill"></ha-icon><span data-l="Meds">${L("Meds")}</span></button>
         </nav>
         <main>
           <header class="top">
             <span id="menu"></span>
-            <h1 id="title">Workout</h1><span class="date" id="date"></span>
+            <h1 id="title">${L("Workout")}</h1><span class="date" id="date"></span>
             <span class="grow"></span>
             <span class="who" id="who"></span>
           </header>
           <div class="page workout" id="p-workout"></div>
           <div class="page overview" id="p-overview"></div>
           <div class="page meds" id="p-meds"></div>
-          <footer class="ver">Workout Tracker ${WT_VERSION}</footer>
+          <footer class="ver"><span>Workout Tracker ${WT_VERSION}</span>
+            <label><span data-l="Language">${L("Language")}</span> <select id="lang">
+              <option value="auto">${esc(L("Automatic"))}</option><option value="en">English</option><option value="nl">Nederlands</option>
+            </select></label></footer>
         </main>
       </div>`;
     this._menu = document.createElement("ha-menu-button");
@@ -3251,6 +4248,11 @@ class WorkoutTrackerPanel extends HTMLElement {
       const b = e.target.closest("[data-tab]");
       if (b) this._show(b.dataset.tab);
     });
+    this.shadowRoot.getElementById("lang").addEventListener("change", (e) => {
+      WT_LANG.set(e.target.value);
+      this._relabel();
+      WT.notify();
+    });
     this.shadowRoot.getElementById("who").addEventListener("change", (e) => {
       if (e.target.id === "who-pick") WT.setProfile(e.target.value);
     });
@@ -3267,6 +4269,21 @@ class WorkoutTrackerPanel extends HTMLElement {
     if (this._onStore) WT.listeners.add(this._onStore);
   }
 
+  /** Texts of the page frame in the current language (the cards redraw themselves). */
+  _relabel() {
+    this._lang = WT_LANG.get();
+    const root = this.shadowRoot;
+    root.querySelectorAll("[data-l]").forEach((e) => { e.textContent = L(e.dataset.l); });
+    const pick = root.getElementById("lang");
+    if (pick) {
+      pick.value = WT_LANG.pick;
+      pick.options[0].textContent = L("Automatic");
+    }
+    root.querySelector(".tabs")?.setAttribute("aria-label", L("Workout tracker"));
+    if (this._tab) this._show(this._tab);
+    this._renderWho();
+  }
+
   /** Profile picker: only when more than one person can use the tracker. */
   _renderWho() {
     const host = this.shadowRoot.getElementById("who");
@@ -3275,12 +4292,12 @@ class WorkoutTrackerPanel extends HTMLElement {
     if (list.length < 2) { host.innerHTML = ""; return; }
     const cur = WT.current();
     const me = WT.profiles.me;
-    const key = list.map((p) => p.id).join() + cur;
+    const key = list.map((p) => p.id).join() + cur + WT_LANG.get();
     if (host.dataset.key === key) return;
     host.dataset.key = key;
     const esc2 = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-    host.innerHTML = `<select id="who-pick" aria-label="Whose workouts">
-      ${list.map((p) => `<option value="${esc2(p.id)}" ${p.id === cur ? "selected" : ""}>${esc2(p.name)}${p.id === me ? " (you)" : ""}</option>`).join("")}
+    host.innerHTML = `<select id="who-pick" aria-label="${L("Whose workouts")}">
+      ${list.map((p) => `<option value="${esc2(p.id)}" ${p.id === cur ? "selected" : ""}>${esc2(p.name)}${p.id === me ? ` (${L("you")})` : ""}</option>`).join("")}
     </select>`;
   }
 
@@ -3291,10 +4308,10 @@ class WorkoutTrackerPanel extends HTMLElement {
     this.shadowRoot.getElementById("p-workout").hidden = tab !== "workout";
     this.shadowRoot.getElementById("p-overview").hidden = tab !== "overview";
     this.shadowRoot.getElementById("p-meds").hidden = tab !== "meds";
-    this.shadowRoot.getElementById("title").textContent = { overview: "Overview", meds: "Medication" }[tab] || "Workout";
+    this.shadowRoot.getElementById("title").textContent = L({ overview: "Overview", meds: "Medication" }[tab] || "Workout");
     const d = new Date();
     this.shadowRoot.getElementById("date").textContent =
-      `${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]}`;
+      `${dow((d.getDay() + 6) % 7)} ${d.getDate()} ${mon(d.getMonth())}`;
     window.scrollTo(0, 0);
   }
 }

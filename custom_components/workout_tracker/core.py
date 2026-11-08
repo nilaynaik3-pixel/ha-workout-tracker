@@ -568,23 +568,80 @@ def group_last_trained(db_path, cfg, before=None):
     return last
 
 
-def plan(db_path, cfg, today=None):
-    """Today's suggestion: the main group and add-on trained least recently.
+# Training splits for the rolling plan. Each day: (key, groups); the first
+# group is the day's anchor and decides when the day is due again.
+SPLITS = {
+    "rotation": {"fits": [4, 5, 6], "days": []},          # main + add-on trained longest ago
+    "ppl": {"fits": [3, 6], "days": [
+        ("push", ["chest", "shoulders", "triceps"]),
+        ("pull", ["back", "biceps"]),
+        ("legs", ["legs", "abs"])]},
+    "upper_lower": {"fits": [2, 4], "days": [
+        ("upper", ["chest", "back", "shoulders", "biceps", "triceps"]),
+        ("lower", ["legs", "abs"])]},
+    "pairs": {"fits": [4, 5], "days": [
+        ("chest_triceps", ["chest", "triceps"]),
+        ("back_biceps", ["back", "biceps"]),
+        ("legs_abs", ["legs", "abs"]),
+        ("shoulders_abs", ["shoulders", "abs"])]},
+    "one_a_day": {"fits": [5, 6], "days": [
+        ("chest", ["chest"]),
+        ("back", ["back"]),
+        ("shoulders", ["shoulders"]),
+        ("legs", ["legs", "abs"]),
+        ("arms", ["biceps", "triceps"])]},
+    "full": {"fits": [2, 3], "days": [
+        ("full_a", ["chest", "back", "legs", "abs"]),
+        ("full_b", ["shoulders", "legs", "biceps", "triceps"])]},
+}
+# Goal: sets x reps for every exercise and the rest between sets. "own" keeps
+# what each exercise has.
+GOALS = {
+    "own": None,
+    "strength": {"sets": 4, "reps": 6, "rest": 180},
+    "muscle": {"sets": 3, "reps": 10, "rest": 90},
+    "endurance": {"sets": 3, "reps": 15, "rest": 60},
+}
 
+
+def clean_program(program):
+    p = program if isinstance(program, dict) else {}
+    split = p.get("split") if p.get("split") in SPLITS else "rotation"
+    goal = p.get("goal") if p.get("goal") in GOALS else "own"
+    return {"split": split, "goal": goal}
+
+
+def apply_goal(cfg, program):
+    """Set every exercise's sets x reps to the goal's (in place)."""
+    g = GOALS.get(clean_program(program)["goal"])
+    if g:
+        for ex in cfg["exercises"].values():
+            ex["sets"], ex["reps"] = g["sets"], g["reps"]
+    return cfg
+
+
+def plan(db_path, cfg, today=None, program=None):
+    """Today's suggestion.
+
+    Rotation (default): the main group and add-on trained least recently.
+    Other splits: the split day whose anchor group was trained least recently,
+    so the days roll on in order whenever you go, and skipping a day or
+    training off-plan just shifts things.
     Only days before today count, so the suggestion stays put while you train.
     Never-trained groups come first, in config order.
     """
+    program = clean_program(program)
     day = _today(today)
     before = group_last_trained(db_path, cfg, before=day)
     all_last = group_last_trained(db_path, cfg)
     d0 = date.fromisoformat(day)
+    ago = lambda ld: (d0 - date.fromisoformat(ld)).days if ld else None
 
     def rows(groups):
         out = []
         for i, g in enumerate(groups):
             ld = before.get(g)
-            out.append({"group": g, "last": ld,
-                        "days": (d0 - date.fromisoformat(ld)).days if ld else None,
+            out.append({"group": g, "last": ld, "days": ago(ld),
                         "today": all_last.get(g) == day, "_order": i})
         return out
 
@@ -597,7 +654,34 @@ def plan(db_path, cfg, today=None):
     nxt_main, nxt_addon = stalest(main), stalest(addon)
     for r in main + addon:
         del r["_order"]
+
+    known = set(cfg["groups"])
+    split_days = []
+    for i, (key, groups) in enumerate(SPLITS[program["split"]]["days"]):
+        gs = [g for g in groups if g in known]
+        if not gs:
+            continue
+        ld = before.get(gs[0])
+        split_days.append({"key": key, "groups": gs, "last": ld, "days": ago(ld), "_order": i})
+    if split_days:
+        queue = sorted(split_days, key=lambda r: (r["last"] or "", r["_order"]))
+        next_groups = list(queue[0]["groups"])
+        next_day = queue[0]["key"]
+        nxt_main = next((g for g in next_groups if g in cfg["main"]), None)
+        nxt_addon = next((g for g in next_groups if g in cfg["addon"]), None)
+        for r in split_days:
+            del r["_order"]
+        queue = [r["key"] for r in queue]
+    else:
+        next_groups = [g for g in (nxt_main, nxt_addon) if g]
+        next_day, queue = None, []
+
     return {"next_main": nxt_main, "next_addon": nxt_addon,
+            "next_groups": next_groups, "next_day": next_day, "queue": queue,
+            "program": program, "split_days": split_days,
+            "splits": {k: {"fits": v["fits"], "days": [[d, [g for g in gs if g in known]] for d, gs in v["days"]]}
+                       for k, v in SPLITS.items()},
+            "goals": {k: v for k, v in GOALS.items() if v},
             "main": main, "addon": addon,
             "trained_today": [g for g in cfg["groups"] if all_last.get(g) == day]}
 
@@ -635,12 +719,16 @@ def stats(db_path, cfg, today=None, weeks=12, series=30, days_per_week=None):
     def ordered_groups(gmap):
         return [g for g in cfg["groups"] if g in gmap] + [g for g in gmap if g not in cfg["groups"]]
 
+    from . import cardio as cd
+    cardio_min = cd.minutes_by_day(db_path, start.isoformat())
+
     calendar = []
     for i in range((d0 - start).days + 1):
         dd = (start + timedelta(days=i)).isoformat()
         info = per_day.get(dd)
         calendar.append({"day": dd, "sets": info["sets"] if info else 0,
-                         "groups": ordered_groups(info["groups"]) if info else []})
+                         "groups": ordered_groups(info["groups"]) if info else [],
+                         "cardio": cardio_min.get(dd, 0)})
 
     week_rows = []
     for w in range(weeks):
@@ -653,7 +741,8 @@ def stats(db_path, cfg, today=None, weeks=12, series=30, days_per_week=None):
                 by_group[g] = by_group.get(g, 0) + n
         week_rows.append({
             "start": ws.isoformat(),
-            "workouts": sum(1 for x in days if x in per_day),
+            "workouts": sum(1 for x in days if x in per_day or x in cardio_min),
+            "lifts": sum(1 for x in days if x in per_day),
             "sets": sets,
             "volume": round(sum(per_day[x]["volume"] for x in days if x in per_day)),
             "by_group": by_group,
@@ -665,6 +754,7 @@ def stats(db_path, cfg, today=None, weeks=12, series=30, days_per_week=None):
         info = per_day.get(dd)
         this_week.append({"day": dd, "sets": info["sets"] if info else 0,
                           "groups": ordered_groups(info["groups"]) if info else [],
+                          "cardio": cardio_min.get(dd, 0),
                           "future": dd > day})
 
     # ---- muscle balance, last 28 days
@@ -717,7 +807,7 @@ def stats(db_path, cfg, today=None, weeks=12, series=30, days_per_week=None):
         "today": day,
         "target_days": days_per_week,
         "this_week": this_week,
-        "workouts_this_week": sum(1 for d in this_week if d["sets"]),
+        "workouts_this_week": sum(1 for d in this_week if d["sets"] or d["cardio"]),
         "weeks": week_rows,
         "calendar": calendar,
         "balance": balance,
@@ -755,7 +845,8 @@ def day_detail(db_path, cfg, day):
     for b in blocks:
         if b["group"] not in groups:
             groups.append(b["group"])
-    return {"day": day, "exercises": blocks, "groups": groups,
+    from . import cardio as cd
+    return {"day": day, "exercises": blocks, "groups": groups, "cardio": cd.day_entries(db_path, day),
             "sets": sum(1 for b in blocks for x in b["sets"] if x["kind"] == "work"),
             "warmups": sum(1 for b in blocks for x in b["sets"] if x["kind"] == "warmup"),
             "visit": visit_on(db_path, day)}
@@ -827,7 +918,7 @@ def add_set_on(db_path, cfg, exercise, day, weight=None, reps=None, rpe=None):
 
 
 def history_days(db_path, cfg):
-    """Compact list of every training day: [day, sets, [groups]]."""
+    """Compact list of every training day: [day, sets, [groups], cardio minutes]."""
     group_of = {n: e["group"] for n, e in cfg["exercises"].items()}
     con = _connect(db_path)
     rows = con.execute("SELECT day, exercise, SUM(kind = 'work') AS n FROM sets GROUP BY day, exercise ORDER BY day").fetchall()
@@ -844,6 +935,17 @@ def history_days(db_path, cfg):
     order = {g: i for i, g in enumerate(cfg["groups"])}
     for d in out:
         d[2].sort(key=lambda g: order.get(g, 99))
+    # 4th item: minutes of cardio that day (cardio-only days are included)
+    from . import cardio as cd
+    mins = cd.minutes_by_day(db_path)
+    by_day = {d[0]: d for d in out}
+    for day, m in mins.items():
+        if day not in by_day:
+            by_day[day] = [day, 0, []]
+            out.append(by_day[day])
+    for d in out:
+        d.append(mins.get(d[0], 0))
+    out.sort(key=lambda d: d[0])
     return out
 
 
@@ -1196,6 +1298,8 @@ def export_csv(db_path, cfg, out_dir, prefix="workout"):
     units = {k: u for k, _, u in METRICS}
     write("body", ["date", "metric", "value", "unit"],
           [[r["day"], r["metric"], r["value"], units.get(r["metric"], "")] for r in body])
+    from . import cardio as cd
+    write("cardio", cd.CSV_HEADER, cd.csv_rows(db_path))
     vis = con.execute("SELECT start, end FROM gym_visits ORDER BY start").fetchall()
     write("gym-visits", ["start", "end", "minutes"],
           [[r["start"], r["end"] or "",
