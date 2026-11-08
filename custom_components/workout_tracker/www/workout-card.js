@@ -21,7 +21,7 @@ const ACTIONS = {
   start: { cls: "new", verb: (w) => (w ? L("Start around {w} kg", { w }) : L("Find your weight")) },
 };
 const RPES = [6, 7, 7.5, 8, 8.5, 9, 9.5, 10];
-const WT_VERSION = "1.6.0";
+const WT_VERSION = "1.6.1";
 const REST_CHOICES = [0, 60, 90, 120, 180];
 
 const esc = (s) =>
@@ -603,6 +603,13 @@ const NL = {
   "Steps from {s}.": "Stappen van {s}.",
   "nothing yet": "nog niets",
   "Activity": "Activiteit",
+  "Hide {ex}? Its sessions are kept.": "{ex} verbergen? De trainingen blijven bewaard.",
+  "Level or incline": "Niveau of helling",
+  "None": "Geen",
+  "Level": "Niveau",
+  "Incline (%)": "Helling (%)",
+  "Has a distance (km)": "Heeft een afstand (km)",
+  "Add cardio activity": "Cardio-activiteit toevoegen",
 };
 // Server texts with numbers in them (progression advice and the like).
 const NL_RX = [
@@ -706,7 +713,9 @@ const ACT_NAMES = {
   treadmill: "Treadmill", run: "Run", walk: "Walk", bike: "Exercise bike", cycling: "Cycling",
   cross: "Cross trainer", rower: "Rower", stairs: "Stair climber", swim: "Swim", rope: "Jump rope", other: "Other",
 };
-const aname = (k) => L(ACT_NAMES[k] || title(k));
+const aname = (k) => WT.bundle?.cardio?.attributes?.names?.[k] || L(ACT_NAMES[k] || title(k));
+/** Same key the server gives an activity you add. */
+const cardioKey = (name) => "c_" + (String(name).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) || "x");
 /** 6.5 (min per km) -> "6:30". */
 const pace = (p) => (p ? `${Math.floor(p)}:${String(Math.round((p % 1) * 60)).padStart(2, "0")}` : "");
 function cardioLine(c) {
@@ -714,7 +723,8 @@ function cardioLine(c) {
   if (c.distance) bits.push(`${num(c.distance)} km`);
   if (c.pace && ["treadmill", "run", "walk"].includes(c.activity)) bits.push(`${pace(c.pace)} /km`);
   else if (c.distance && c.minutes) bits.push(`${num(Math.round((c.distance / c.minutes) * 600) / 10)} km/h`);
-  if (c.level != null) bits.push(c.activity === "treadmill" ? L("{v}% incline", { v: num(c.level) }) : L("level {v}", { v: num(c.level) }));
+  const inc = (WT.bundle?.cardio?.attributes?.activities || []).find((a) => a.key === c.activity)?.level === "incline";
+  if (c.level != null) bits.push(inc ? L("{v}% incline", { v: num(c.level) }) : L("level {v}", { v: num(c.level) }));
   if (c.kcal) bits.push(`${num(c.kcal)} kcal`);
   if (c.hr) bits.push(`${num(c.hr)} bpm`);
   return bits.join(" \u00b7 ");
@@ -1245,6 +1255,16 @@ class WorkoutCard extends HTMLElement {
           this._render();
           return;
         }
+        if (this._newGroup === "__cardio") {
+          await this._call("workout_add_cardio_activity", { name, distance: !!this._newDist, level: this._newLevel || "" });
+          this._cardioOn = true;
+          this._cardio = cardioKey(name);
+          this._cardioForm = null;
+          this._flashAdd = L("Added {name}.", { name });
+          this._newName = "";
+          this._render();
+          break;
+        }
         const data = { name, group: this._newGroup, step: Number(this._newStep) };
         if (this._newDemo) data.demo = this._newDemo;
         await this._call("workout_add_exercise", data);
@@ -1330,6 +1350,12 @@ class WorkoutCard extends HTMLElement {
         this._restOver = null;
         this._render();
         break;
+      case "hide-cardio":
+        if (this._cardio && confirm(L("Hide {ex}? Its sessions are kept.", { ex: aname(this._cardio) }))) {
+          this._call("workout_hide_cardio_activity", { activity: this._cardio });
+          this._cardio = null;
+        }
+        break;
       case "hide":
         if (sel && confirm(L("Hide {ex}? Its history is kept, and adding it again with the same name brings it back.", { ex: sel.state }))) {
           this._call("workout_hide_exercise", { exercise: sel.state });
@@ -1351,7 +1377,13 @@ class WorkoutCard extends HTMLElement {
       return;
     }
     if (t.id === "new-name") this._newName = t.value;
-    if (t.id === "new-group") this._newGroup = t.value;
+    if (t.id === "new-group") {
+      const was = this._newGroup === "__cardio";
+      this._newGroup = t.value;
+      if (was !== (t.value === "__cardio")) { this._readInputs(); this._render(); }
+    }
+    if (t.id === "new-dist") this._newDist = t.checked;
+    if (t.id === "new-level") this._newLevel = t.value;
     if (t.id === "new-step") this._newStep = t.value;
     if (t.id === "w" || t.id === "r") this._readInputs();
     if (t.dataset?.cf) this._readCardio();
@@ -1828,7 +1860,7 @@ class WorkoutCard extends HTMLElement {
         <label><input data-cf="${field}" inputmode="${mode}" value="${esc(num(f[field]))}" aria-label="${esc(label)}"><span>${esc(unit)}</span></label>
         <button data-action="c-step" data-f="${field}" data-d="${d}" aria-label="${L("More")}">+</button>
       </div>`;
-    const levelLbl = key === "treadmill" ? L("% incline") : L("level");
+    const levelLbl = act.level === "incline" ? L("% incline") : L("level");
     const today = (c.today || []);
     const pct = Math.min(100, Math.round((c.week_minutes / (c.target || 150)) * 100));
     return `<section class="log cardio">
@@ -1842,7 +1874,7 @@ class WorkoutCard extends HTMLElement {
         ${step("minutes", L("Minutes"), 5, "min", "numeric")}
         ${act.distance ? step("distance", L("Distance"), key === "swim" ? 0.1 : 0.5, "km") : ""}
       </div>
-      ${act.level ? `<div class="steppers one">${step("level", levelLbl, key === "treadmill" ? 0.5 : 1, levelLbl)}</div>` : ""}
+      ${act.level ? `<div class="steppers one">${step("level", levelLbl, act.level === "incline" ? 0.5 : 1, levelLbl)}</div>` : ""}
       <button class="link quiet" data-action="c-more" aria-expanded="${!!this._cardioMore}">${this._cardioMore ? L("Fewer details") : L("Calories and heart rate")}</button>
       ${this._cardioMore ? `<div class="form cform">
         <label>${L("Calories")}<input data-cf="kcal" inputmode="numeric" value="${esc(f.kcal)}" placeholder="${L("kcal")}"></label>
@@ -1896,7 +1928,9 @@ class WorkoutCard extends HTMLElement {
   _renderManage(plan, sel) {
     const p = plan.attributes;
     const groups = [...(p.main || []), ...(p.addon || [])].map((r) => r.group);
-    if (!this._newGroup || !groups.includes(this._newGroup)) this._newGroup = groups[0] || "";
+    const cardioOk = !!wtGet(this._hass, "cardio")?.attributes?.activities;
+    const isCardio = cardioOk && this._newGroup === "__cardio";
+    if (!isCardio && (!this._newGroup || !groups.includes(this._newGroup))) this._newGroup = groups[0] || "";
     const steps = ["1", "2", "2.5", "4", "5", "10"];
     if (!steps.includes(this._newStep)) steps.push(this._newStep);
     const lib = WT.integration(this._hass);
@@ -1906,16 +1940,22 @@ class WorkoutCard extends HTMLElement {
     return `<details class="manage" ${this._manageOpen ? "open" : ""}>
       <summary>${L("Manage exercises")}</summary>
       ${lib && this._picker?.mode === "add" ? this._renderPicker()
-        : lib ? `<button class="lib-btn" data-action="lib-open">${L("Search the exercise library")}</button>` : ""}
+        : lib && !isCardio ? `<button class="lib-btn" data-action="lib-open">${L("Search the exercise library")}</button>` : ""}
       ${picked}
       <div class="form">
         <label class="f-name">${L("Name")}<input id="new-name" value="${esc(this._newName)}" placeholder="${L("e.g. Cable fly")}" autocomplete="off"></label>
-        <label>${L("Muscle group")}<select id="new-group">${groups.map((g) => `<option value="${esc(g)}" ${g === this._newGroup ? "selected" : ""}>${esc(gname(g))}</option>`).join("")}</select></label>
-        <label>${L("Weight step")}<select id="new-step">${steps.map((s) => `<option value="${s}" ${s === this._newStep ? "selected" : ""}>${s} kg</option>`).join("")}</select></label>
-        <button class="add-btn" data-action="add">${L("Add exercise")}</button>
+        <label>${L("Muscle group")}<select id="new-group">${groups.map((g) => `<option value="${esc(g)}" ${g === this._newGroup ? "selected" : ""}>${esc(gname(g))}</option>`).join("")}${cardioOk ? `<option value="__cardio" ${isCardio ? "selected" : ""}>${L("Cardio")}</option>` : ""}</select></label>
+        ${isCardio ? `<label>${L("Level or incline")}<select id="new-level">
+            <option value="" ${!this._newLevel ? "selected" : ""}>${L("None")}</option>
+            <option value="level" ${this._newLevel === "level" ? "selected" : ""}>${L("Level")}</option>
+            <option value="incline" ${this._newLevel === "incline" ? "selected" : ""}>${L("Incline (%)")}</option></select></label>
+          <label class="f-check"><input id="new-dist" type="checkbox" ${this._newDist ? "checked" : ""}> ${L("Has a distance (km)")}</label>`
+        : `<label>${L("Weight step")}<select id="new-step">${steps.map((s) => `<option value="${s}" ${s === this._newStep ? "selected" : ""}>${s} kg</option>`).join("")}</select></label>`}
+        <button class="add-btn" data-action="add">${isCardio ? L("Add cardio activity") : L("Add exercise")}</button>
       </div>
       ${this._flashAdd ? `<p class="hint">${esc(this._flashAdd)}</p>` : ""}
-      ${sel && sel.state !== "none" ? `<button class="link quiet" data-action="hide">${L("Hide {ex} from the lists", { ex: esc(sel.state) })}</button>` : ""}
+      ${this._cardio && this._showCardio() ? `<button class="link quiet" data-action="hide-cardio">${L("Hide {ex} from the lists", { ex: esc(aname(this._cardio)) })}</button>`
+        : sel && sel.state !== "none" ? `<button class="link quiet" data-action="hide">${L("Hide {ex} from the lists", { ex: esc(sel.state) })}</button>` : ""}
     </details>`;
   }
 }
@@ -2289,6 +2329,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 .cardio .stepper > button { width: 38px; }
 .cardio > .link { font-size: 13px; padding: 10px 0 0; }
 .cform { margin: 8px 0 0; }
+.form .f-check { grid-column: 1 / -1; flex-direction: row; align-items: center; gap: 8px; color: var(--text); font-size: 15px; }
+.form .f-check input { width: 20px; height: 20px; accent-color: var(--lamp); }
 .cform label { min-width: 0; }
 .cform input { min-width: 0; width: 100%; }
 .cweek { margin: 16px 0 6px; }

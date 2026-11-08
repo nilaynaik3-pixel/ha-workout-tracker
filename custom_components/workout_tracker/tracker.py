@@ -512,6 +512,15 @@ class Tracker(MedsMixin, ActivityMixin):
         await self.run(cd.log_cardio, self.db, activity, minutes, distance, level, kcal, hr, d)
         await self.publish(("cardio", "stats", "day", "plan"))
 
+    async def add_cardio_activity(self, name, distance=False, level=None):
+        key = await self.run(cd.add_activity, self.db, name, _truthy(distance), level or None)
+        await self.publish(("cardio",))
+        return key
+
+    async def hide_cardio_activity(self, activity):
+        await self.run(cd.hide_activity, self.db, str(activity or ""))
+        await self.publish(("cardio",))
+
     async def delete_cardio(self, entry_id):
         await self.run(cd.delete_cardio, self.db, int(entry_id))
         await self.publish(("cardio", "stats", "day"))

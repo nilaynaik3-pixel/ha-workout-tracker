@@ -526,6 +526,31 @@ log_cardio:
       name: Day
       selector:
         date: {}
+add_cardio_activity:
+  name: Add your own cardio activity
+  fields:
+    name:
+      name: Name
+      required: true
+      selector:
+        text: {}
+    distance:
+      name: Has a distance
+      selector:
+        boolean: {}
+    level:
+      name: Level or incline
+      selector:
+        select:
+          options: [level, incline]
+hide_cardio_activity:
+  name: Hide a cardio activity
+  fields:
+    activity:
+      name: Activity
+      required: true
+      selector:
+        text: {}
 delete_cardio:
   name: Delete a cardio session
   fields:

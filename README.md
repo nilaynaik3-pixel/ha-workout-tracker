@@ -52,7 +52,8 @@ Home Assistant.
 - **Gym arrival and departure** from a zone: a notification with today's plan
   when you arrive, a summary when you leave.
 - **Cardio**: treadmill, run, walk, exercise bike, cycling, cross trainer,
-  rower, stair climber, swim, jump rope. Log minutes, distance, incline or
+  rower, stair climber, swim, jump rope, or add your own under Manage
+  exercises (Muscle group: Cardio). Log minutes, distance, incline or
   level, and optionally calories and heart rate. The Overview shows minutes
   per week against the 150-minute guideline and your pace over time.
 - **English and Dutch**: follows your Home Assistant language, or pick one

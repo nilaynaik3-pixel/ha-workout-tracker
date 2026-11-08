@@ -22,6 +22,13 @@ CREATE TABLE IF NOT EXISTS cardio (
     hr REAL
 );
 CREATE INDEX IF NOT EXISTS idx_cardio_day ON cardio(day);
+CREATE TABLE IF NOT EXISTS cardio_activities (
+    key TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    distance INTEGER NOT NULL DEFAULT 0,
+    level TEXT,
+    hidden INTEGER NOT NULL DEFAULT 0
+);
 """
 
 # key: (has distance, what "level" means or None)
@@ -47,6 +54,58 @@ def _con(db_path):
     return con
 
 
+def _slug(name):
+    import re
+    return "c_" + (re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")[:40] or "x")
+
+
+def activities(db_path, with_hidden=False):
+    """Built-in activities plus your own: {key: {"distance", "level", "name", "custom", "hidden"}}."""
+    out = {k: {"distance": d, "level": lv, "name": None, "custom": False, "hidden": False}
+           for k, (d, lv) in ACTIVITIES.items()}
+    con = _con(db_path)
+    rows = con.execute("SELECT * FROM cardio_activities ORDER BY rowid").fetchall()
+    con.close()
+    for r in rows:
+        if r["key"] in ACTIVITIES:           # a built-in hidden by you
+            out[r["key"]]["hidden"] = bool(r["hidden"])
+            continue
+        out[r["key"]] = {"distance": bool(r["distance"]), "level": r["level"] or None,
+                         "name": r["name"], "custom": True, "hidden": bool(r["hidden"])}
+    if not with_hidden:
+        out = {k: v for k, v in out.items() if not v["hidden"]}
+    return out
+
+
+def add_activity(db_path, name, distance=False, level=None):
+    """Add your own cardio activity (or bring back a hidden one with that name)."""
+    name = " ".join(str(name or "").split())[:40]
+    if not name:
+        raise ValueError("empty activity name")
+    level = level if level in ("level", "incline") else None
+    key = _slug(name)
+    con = _con(db_path)
+    with con:
+        con.execute("INSERT INTO cardio_activities(key, name, distance, level, hidden) VALUES(?, ?, ?, ?, 0) "
+                    "ON CONFLICT(key) DO UPDATE SET name = excluded.name, distance = excluded.distance, "
+                    "level = excluded.level, hidden = 0",
+                    (key, name, int(bool(distance)), level))
+    con.close()
+    return key
+
+
+def hide_activity(db_path, key):
+    """Hide an activity from the list; its sessions are kept."""
+    con = _con(db_path)
+    with con:
+        if key in ACTIVITIES:
+            con.execute("INSERT INTO cardio_activities(key, name, hidden) VALUES(?, ?, 1) "
+                        "ON CONFLICT(key) DO UPDATE SET hidden = 1", (key, key))
+        else:
+            con.execute("UPDATE cardio_activities SET hidden = 1 WHERE key = ?", (key,))
+    con.close()
+
+
 def _num(v, lo=0.0, hi=100000.0):
     if v in (None, ""):
         return None
@@ -60,12 +119,13 @@ def _num(v, lo=0.0, hi=100000.0):
 def log_cardio(db_path, activity, minutes, distance=None, level=None, kcal=None, hr=None,
                day=None, now=None):
     activity = str(activity or "").strip().lower()
-    if activity not in ACTIVITIES:
+    acts = activities(db_path, with_hidden=True)
+    if activity not in acts:
         raise ValueError(f"unknown activity {activity}")
     mins = _num(minutes, 0, 24 * 60)
     if not mins:
         raise ValueError("minutes must be more than 0")
-    has_dist, has_level = ACTIVITIES[activity]
+    has_dist, has_level = acts[activity]["distance"], acts[activity]["level"]
     con = _con(db_path)
     with con:
         cur = con.execute(
@@ -134,7 +194,8 @@ def cardio_part(db_path, today=None, weeks=12):
         last[a] = pts[-1]
         trend[a] = pts[-20:]
     return {
-        "activities": [{"key": k, "distance": v[0], "level": v[1]} for k, v in ACTIVITIES.items()],
+        "activities": [{"key": k, **v} for k, v in activities(db_path).items()],
+        "names": {k: v["name"] for k, v in activities(db_path, with_hidden=True).items() if v["name"]},
         "today": [r for r in rows if r["day"] == day],
         "recent": list(reversed(rows[-8:])),
         "weeks": week_rows,
@@ -150,7 +211,8 @@ def day_entries(db_path, day):
 
 
 def csv_rows(db_path):
-    return [[r["day"], r["ts"][11:16], r["activity"], r["minutes"],
+    names = {k: v["name"] for k, v in activities(db_path, with_hidden=True).items() if v["name"]}
+    return [[r["day"], r["ts"][11:16], names.get(r["activity"], r["activity"]), r["minutes"],
              "" if r["distance"] is None else r["distance"],
              "" if r["pace"] is None else r["pace"],
              "" if r["level"] is None else r["level"],

@@ -103,6 +103,28 @@ class CardioTest(unittest.TestCase):
         cd.delete_cardio(self.db, part["today"][0]["id"])
         self.assertEqual(cd.cardio_part(self.db, TODAY.isoformat())["week_minutes"], 10)
 
+    def test_own_activity(self):
+        key = cd.add_activity(self.db, "  Spin class ", True, "level")
+        self.assertEqual(key, "c_spin_class")
+        cd.log_cardio(self.db, key, 45, 18, 7, day=TODAY.isoformat())
+        part = cd.cardio_part(self.db, TODAY.isoformat())
+        act = next(a for a in part["activities"] if a["key"] == key)
+        self.assertEqual((act["name"], act["distance"], act["level"], act["custom"]), ("Spin class", True, "level", True))
+        self.assertEqual(part["names"][key], "Spin class")
+        self.assertEqual(part["today"][0]["level"], 7)
+        cd.hide_activity(self.db, key)
+        cd.hide_activity(self.db, "rope")
+        keys = [a["key"] for a in cd.cardio_part(self.db, TODAY.isoformat())["activities"]]
+        self.assertNotIn(key, keys)
+        self.assertNotIn("rope", keys)
+        self.assertEqual(cd.cardio_part(self.db, TODAY.isoformat())["week_minutes"], 45)   # history kept
+        cd.add_activity(self.db, "Spin class", False)
+        self.assertIn(key, [a["key"] for a in cd.cardio_part(self.db, TODAY.isoformat())["activities"]])
+        self.assertIn("Spin class", open(wc.export_csv(self.db, self.cfg, os.path.join(self.tmp.name, "e"))
+                                         and [os.path.join(self.tmp.name, "e", f) for f in os.listdir(os.path.join(self.tmp.name, "e")) if "cardio" in f][0]).read())
+        with self.assertRaises(ValueError):
+            cd.add_activity(self.db, "   ")
+
     def test_bad_input(self):
         with self.assertRaises(ValueError):
             cd.log_cardio(self.db, "flying", 10)

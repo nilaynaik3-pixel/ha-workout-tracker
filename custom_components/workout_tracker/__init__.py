@@ -30,7 +30,7 @@ from .tracker import Hub
 _LOGGER = logging.getLogger(__name__)
 
 DOMAIN = "workout_tracker"
-VERSION = "1.6.0"
+VERSION = "1.6.1"
 PANEL_URL = "workout"
 STATIC_URL = "/workout_tracker/static"
 EXPORT_URL = "/workout_tracker/export"
@@ -65,6 +65,8 @@ SERVICES = {
     "log_body": ("log_body", ["metric", "value", "day"]),
     "log_cardio": ("log_cardio", ["activity", "minutes", "distance", "level", "kcal", "hr", "day"]),
     "delete_cardio": ("delete_cardio", ["entry_id"]),
+    "add_cardio_activity": ("add_cardio_activity", ["name", "distance", "level"]),
+    "hide_cardio_activity": ("hide_cardio_activity", ["activity"]),
     "delete_body": ("delete_body", ["entry_id"]),
     "gym_start": ("gym_arrived", []),
     "gym_end": ("gym_left", []),
