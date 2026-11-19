@@ -30,8 +30,9 @@ Home Assistant.
   plus step-by-step instructions and the muscles worked, for 870+ exercises.
 - **Exercise library**: search it to add new exercises with their demo,
   muscle group and weight step filled in.
-- **Rest timer** after every set, with -15/+15 s, a phone alert when the rest
-  is over, and a length you choose (or off).
+- **Rest timer** after every set, with -15/+15 s. Choose the length (30 s to
+  5 min, or your own time), and whether the phone vibrates and gets a
+  notification when the rest is over.
 - **Progression advice** per exercise: go up, stay, or go down, from your last
   sessions and how hard they felt.
 - **Live personal-record alerts** for heaviest weight, best estimated

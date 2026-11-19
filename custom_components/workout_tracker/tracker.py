@@ -231,6 +231,7 @@ class Tracker(MedsMixin, ActivityMixin):
             self._set("rest", "running" if self.rest else "idle", {
                 "seconds": self.rest_seconds,
                 "notify": self.rest_notify,
+                "vibrate": self.rest_vibrate,
                 "phone": bool(self.notify),
                 **(self.rest or {}),
             })
@@ -399,6 +400,10 @@ class Tracker(MedsMixin, ActivityMixin):
     def rest_notify(self):
         return bool(self.prefs.get("rest_notify", True))
 
+    @property
+    def rest_vibrate(self):
+        return bool(self.prefs.get("rest_vibrate", True))
+
     def _start_rest(self, exercise, seconds, started=None, length=None):
         """Run the rest timer for `seconds` from now. `started`/`length` keep
         the original start when time is added to a running timer."""
@@ -429,8 +434,18 @@ class Tracker(MedsMixin, ActivityMixin):
         self.rest = None
         self.host.fire("workout_rest_over", {"exercise": exercise})
         if self.rest_notify:
-            await self.notify_(tr(self.lang, "Rest over"), self._next_set_text(exercise),
-                               {"tag": "workout-rest", "push": {"interruption-level": "time-sensitive"}})
+            # The notification's sound is what makes a locked phone buzz; without
+            # vibration it arrives silently.
+            push = {"interruption-level": "time-sensitive"}
+            if not self.rest_vibrate:
+                push["sound"] = "none"
+            data = {"tag": "workout-rest", "push": push}
+            if self.rest_vibrate:
+                data["vibrationPattern"] = "0, 400, 150, 400, 150, 400"     # Android
+            else:
+                data["channel"] = "workout_rest_silent"                    # Android: a quiet channel
+                data["importance"] = "low"
+            await self.notify_(tr(self.lang, "Rest over"), self._next_set_text(exercise), data)
         await self.publish(("rest",))
 
     def _next_set_text(self, exercise):
@@ -467,7 +482,7 @@ class Tracker(MedsMixin, ActivityMixin):
                 self._start_rest(r["exercise"], left, r["started"], max(1, r["length"] + extra))
         await self.publish(("rest",))
 
-    async def rest_settings(self, seconds=None, notify=None):
+    async def rest_settings(self, seconds=None, notify=None, vibrate=None):
         if seconds not in (None, ""):
             secs = max(0, min(int(float(seconds)), 3600))
             await self.run(wc.set_pref, self.db, "rest_seconds", secs)
@@ -475,6 +490,9 @@ class Tracker(MedsMixin, ActivityMixin):
         if notify is not None:
             await self.run(wc.set_pref, self.db, "rest_notify", _truthy(notify))
             self.prefs["rest_notify"] = _truthy(notify)
+        if vibrate is not None:
+            await self.run(wc.set_pref, self.db, "rest_vibrate", _truthy(vibrate))
+            self.prefs["rest_vibrate"] = _truthy(vibrate)
         await self.publish(("rest",))
 
     # ------------------------------------------------------- calendar editing

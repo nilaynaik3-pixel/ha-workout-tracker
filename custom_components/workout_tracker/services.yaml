@@ -196,6 +196,10 @@ rest_settings:
       name: Phone notification when rest is over
       selector:
         boolean: {}
+    vibrate:
+      name: Vibrate when rest is over
+      selector:
+        boolean: {}
 hide_exercise:
   name: Hide an exercise (history is kept)
   fields:

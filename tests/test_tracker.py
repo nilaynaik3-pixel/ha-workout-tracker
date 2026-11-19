@@ -226,7 +226,17 @@ class TrackerTest(unittest.TestCase):
         self.assertEqual(msg["title"], "Rest over")
         self.assertIn("set 3 of 3", msg["message"])
         self.assertEqual(msg["data"]["tag"], "workout-rest")
+        self.assertTrue(self.b("rest")["attributes"]["vibrate"])            # on by default
+        self.assertNotIn("sound", msg["data"]["push"])                      # normal sound: the phone buzzes
         self.assertEqual(self.host.events[-1][0], "workout_rest_over")
+        # vibration off: the notification arrives silently
+        run(self.t.rest_settings(vibrate=False))
+        self.assertFalse(self.b("rest")["attributes"]["vibrate"])
+        run(self.t.rest_start(30))
+        run(self.host.run_timers())
+        self.assertEqual(self.host.calls[-1][2]["data"]["push"]["sound"], "none")
+        run(self.t.rest_settings(vibrate=True))
+        del self.host.calls[1:]
         # adding time keeps the start, stopping cancels
         run(self.t.rest_start(60))
         started = self.b("rest")["attributes"]["started"]

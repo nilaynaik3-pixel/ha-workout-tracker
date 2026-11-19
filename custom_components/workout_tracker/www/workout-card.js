@@ -21,8 +21,18 @@ const ACTIONS = {
   start: { cls: "new", verb: (w) => (w ? L("Start around {w} kg", { w }) : L("Find your weight")) },
 };
 const RPES = [6, 7, 7.5, 8, 8.5, 9, 9.5, 10];
-const WT_VERSION = "1.6.1";
-const REST_CHOICES = [0, 60, 90, 120, 180];
+const WT_VERSION = "1.7.0";
+const REST_CHOICES = [30, 45, 60, 90, 120, 150, 180, 240, 300];
+/** "1:30", "90" or "1.5m" -> seconds (null if it can't be read). */
+function parseRest(v) {
+  const t = String(v || "").trim().replace(",", ".");
+  let m = t.match(/^(\d{1,2}):(\d{1,2})$/);
+  if (m) return Number(m[1]) * 60 + Number(m[2]);
+  m = t.match(/^(\d+(?:\.\d+)?)\s*m(in)?$/i);
+  if (m) return Math.round(Number(m[1]) * 60);
+  m = t.match(/^(\d+)\s*s?$/i);
+  return m ? Number(m[1]) : null;
+}
 
 const esc = (s) =>
   String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -610,6 +620,16 @@ const NL = {
   "Incline (%)": "Helling (%)",
   "Has a distance (km)": "Heeft een afstand (km)",
   "Add cardio activity": "Cardio-activiteit toevoegen",
+  "Type a time like 1:15 or 75 (5 seconds to 60 minutes).": "Typ een tijd zoals 1:15 of 75 (5 seconden tot 60 minuten).",
+  "Own time, e.g. 1:15": "Eigen tijd, bijv. 1:15",
+  "Own rest time": "Eigen rusttijd",
+  "Set": "Instellen",
+  "When the rest is over": "Als de rust voorbij is",
+  "Vibrate": "Trillen",
+  "Buzzes the phone a few times while this page is open": "Laat de telefoon een paar keer trillen als deze pagina open is",
+  "Notification": "Melding",
+  "Also reaches you when the phone is locked or the app is closed": "Komt ook aan als je telefoon vergrendeld is of de app dicht is",
+  "Arrives silently, since vibration is off": "Komt stil binnen, want trillen staat uit",
 };
 // Server texts with numbers in them (progression advice and the like).
 const NL_RX = [
@@ -1330,12 +1350,29 @@ class WorkoutCard extends HTMLElement {
         this._render();
         break;
       case "rest-set":
-        this._restMenu = false;
+        this._restErr = "";
         this._call("workout_rest_settings", { seconds: Number(btn.dataset.s) });
         break;
+      case "rest-custom": {
+        const v = parseRest(this.shadowRoot.getElementById("rest-own")?.value);
+        if (v == null || v < 5 || v > 3600) {
+          this._restErr = L("Type a time like 1:15 or 75 (5 seconds to 60 minutes).");
+          this._render();
+          break;
+        }
+        this._restErr = "";
+        this._call("workout_rest_settings", { seconds: v });
+        break;
+      }
       case "rest-notify":
         this._call("workout_rest_settings", { notify: btn.getAttribute("aria-pressed") !== "true" });
         break;
+      case "rest-vibrate": {
+        const on = btn.getAttribute("aria-pressed") !== "true";
+        this._call("workout_rest_settings", { vibrate: on });
+        if (on) this._buzz("test-" + Date.now(), true);     // feel what it's like
+        break;
+      }
       case "rest-start":
         this._restMenu = false;
         this._call("workout_rest_start", { exercise: sel?.state });
@@ -1387,6 +1424,7 @@ class WorkoutCard extends HTMLElement {
     if (t.id === "new-step") this._newStep = t.value;
     if (t.id === "w" || t.id === "r") this._readInputs();
     if (t.dataset?.cf) this._readCardio();
+    if (t.id === "rest-own") this._restOwn = t.value;
   }
 
   _openPicker(mode, group) {
@@ -1511,11 +1549,15 @@ class WorkoutCard extends HTMLElement {
     }
   }
 
-  _buzz(token) {
+  /** Rest over: buzz the phone (unless vibration is off). In the Home Assistant app on
+   * iPhone this uses the app's haptics; Android browsers and the Android app vibrate. */
+  _buzz(token, force) {
     if (this._buzzed === token) return;
     this._buzzed = token;
-    this._haptic("success");
-    try { navigator.vibrate?.([120, 80, 120]); } catch (e) { /* not supported */ }
+    const on = force || (this._rest()?.attributes?.vibrate ?? true);
+    if (!on) return;
+    [0, 350, 700, 1400, 1750].forEach((ms, i) => setTimeout(() => this._haptic(i % 3 === 2 ? "warning" : "heavy"), ms));
+    try { navigator.vibrate?.([400, 150, 400, 150, 400]); } catch (e) { /* not supported */ }
   }
 
   _renderRest(sel) {
@@ -1553,11 +1595,23 @@ class WorkoutCard extends HTMLElement {
       </div>`;
     }
     const len = a.seconds ? mmss(a.seconds) : "off";
+    const vib = a.vibrate ?? true;
+    const choices = [0, ...new Set([...REST_CHOICES, ...(a.seconds ? [a.seconds] : [])])].sort((x, y) => x - y);
+    const sw = (action, on, label, sub) => `<button class="rest-sw" data-action="${action}" role="switch" aria-checked="${on}" aria-pressed="${on}">
+        <span><b>${label}</b><small>${sub}</small></span><i class="sw ${on ? "on" : ""}"></i></button>`;
     const menu = this._restMenu ? `<div class="rest-menu">
+        <p class="rest-h">${L("Rest between sets")}</p>
         <div class="rest-opts" role="group" aria-label="${L("Rest between sets")}">
-          ${REST_CHOICES.map((v) => `<button class="chip ${v === a.seconds ? "on" : ""}" data-action="rest-set" data-s="${v}" aria-pressed="${v === a.seconds}">${v ? mmss(v) : L("Off")}</button>`).join("")}
+          ${choices.map((v) => `<button class="chip ${v === a.seconds ? "on" : ""}" data-action="rest-set" data-s="${v}" aria-pressed="${v === a.seconds}">${v ? mmss(v) : L("Off")}</button>`).join("")}
         </div>
-        ${a.phone ? `<button class="chip ${a.notify ? "on" : ""}" data-action="rest-notify" aria-pressed="${!!a.notify}">${L("Phone alert when rest is over")}</button>` : ""}
+        <div class="rest-own">
+          <input id="rest-own" inputmode="numeric" value="${esc(this._restOwn || "")}" placeholder="${L("Own time, e.g. 1:15")}" aria-label="${L("Own rest time")}">
+          <button class="chip" data-action="rest-custom">${L("Set")}</button>
+        </div>
+        ${this._restErr ? `<p class="hint small">${esc(this._restErr)}</p>` : ""}
+        <p class="rest-h">${L("When the rest is over")}</p>
+        ${sw("rest-vibrate", vib, L("Vibrate"), L("Buzzes the phone a few times while this page is open"))}
+        ${a.phone ? sw("rest-notify", !!a.notify, L("Notification"), vib ? L("Also reaches you when the phone is locked or the app is closed") : L("Arrives silently, since vibration is off")) : ""}
         <button class="link" data-action="rest-start">${L("Start a rest now")}</button>
       </div>` : "";
     return `<div class="rest">
@@ -2196,6 +2250,22 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 .rest { margin: 8px 0 0; }
 .rest > .link { padding: 4px 0; font-size: 13px; }
 .rest-menu { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin: 4px 0 6px; }
+.rest-menu { align-items: stretch; padding: 12px; border-radius: var(--r-md); background: var(--surface-2); }
+.rest-menu > .link { align-self: flex-start; }
+.rest-h { margin: 4px 0 0; font: 600 14px/1.2 var(--display); }
+.rest-opts { display: flex; flex-wrap: wrap; gap: 6px; }
+.rest-own { display: flex; gap: 6px; }
+.rest-own input { flex: 1; min-width: 0; font: inherit; font-size: 15px; color: var(--text); background: var(--surface);
+  border: 1px solid var(--line); border-radius: var(--r-sm); padding: 8px 10px; }
+.rest-sw { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; text-align: left;
+  padding: 10px 12px; border-radius: var(--r-sm); border: 0; background: var(--surface); color: var(--text); font: inherit; }
+.rest-sw span { display: flex; flex-direction: column; gap: 2px; }
+.rest-sw b { font-weight: 500; font-size: 15px; }
+.rest-sw small { color: var(--muted); font-size: 12px; }
+.sw { flex: none; position: relative; width: 44px; height: 26px; border-radius: 13px; background: #3a4456; transition: background .15s; }
+.sw::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; transition: transform .15s; }
+.sw.on { background: var(--lamp); }
+.sw.on::after { transform: translateX(18px); }
 .rest-opts { display: flex; gap: 6px; flex-wrap: wrap; }
 .rest.on { margin-top: 10px; padding: 10px 12px 8px; border-radius: 14px; background: var(--wc-sunk); }
 .rest-bar { height: 4px; border-radius: 2px; background: var(--wc-line); overflow: hidden; }

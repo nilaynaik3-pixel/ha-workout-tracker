@@ -30,7 +30,7 @@ from .tracker import Hub
 _LOGGER = logging.getLogger(__name__)
 
 DOMAIN = "workout_tracker"
-VERSION = "1.6.1"
+VERSION = "1.7.0"
 PANEL_URL = "workout"
 STATIC_URL = "/workout_tracker/static"
 EXPORT_URL = "/workout_tracker/export"
@@ -55,7 +55,7 @@ SERVICES = {
     "rest_start": ("rest_start", ["seconds", "exercise"]),
     "rest_stop": ("rest_stop", []),
     "rest_add": ("rest_add", ["seconds"]),
-    "rest_settings": ("rest_settings", ["seconds", "notify"]),
+    "rest_settings": ("rest_settings", ["seconds", "notify", "vibrate"]),
     "hide_exercise": ("hide_exercise", ["exercise"]),
     "set_day": ("set_day", ["day"]),
     "open_day": ("open_day_", ["day"]),
