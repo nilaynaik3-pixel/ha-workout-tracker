@@ -227,6 +227,25 @@ class TrackerMedsTest(unittest.TestCase):
         self.assertEqual(titles, ["Time for Vitamin D", "Still to take: Vitamin D"])
         self.assertFalse([c for c in self.host.calls if c[0] == "script"])
 
+    def test_echo_once_per_dose(self):
+        # home and not taken: the Echo speaks at 08:00 only, the 08:30 follow-up is phone only
+        t = self.make()
+        self.loop.run_until_complete(t.meds_tick(at(0, "08:00")))
+        self.loop.run_until_complete(t.meds_tick(at(0, "08:30")))
+        say = [c for c in self.host.calls if c[:2] == ("script", "say")]
+        phone = [c for c in self.host.calls if c[1] == "mobile_app_iphone"]
+        self.assertEqual(len(say), 1)
+        self.assertEqual(len(phone), 2)
+        # away at 08:00 but home by 08:30: the follow-up is the one announcement
+        self.host.calls.clear()
+        self.host.home = False
+        self.loop.run_until_complete(t.meds_tick(at(1, "08:00")))
+        self.host.home = True
+        self.loop.run_until_complete(t.meds_tick(at(1, "08:30")))
+        say = [c for c in self.host.calls if c[:2] == ("script", "say")]
+        self.assertEqual(len(say), 1)
+        self.assertTrue(say[0][2]["message"].startswith("Reminder"))
+
     def test_echo_fallback_and_echo_off(self):
         t = self.make(say=False)
         self.loop.run_until_complete(t.meds_tick(at(0, "08:00")))

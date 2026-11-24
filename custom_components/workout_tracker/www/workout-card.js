@@ -21,7 +21,7 @@ const ACTIONS = {
   start: { cls: "new", verb: (w) => (w ? L("Start around {w} kg", { w }) : L("Find your weight")) },
 };
 const RPES = [6, 7, 7.5, 8, 8.5, 9, 9.5, 10];
-const WT_VERSION = "1.7.0";
+const WT_VERSION = "1.7.1";
 const REST_CHOICES = [30, 45, 60, 90, 120, 150, 180, 240, 300];
 /** "1:30", "90" or "1.5m" -> seconds (null if it can't be read). */
 function parseRest(v) {

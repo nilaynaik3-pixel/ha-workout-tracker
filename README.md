@@ -157,7 +157,7 @@ On the **Meds** tab, add a medicine or supplement with its dose, a note
 (e.g. "with food") and when you take it. At each time you get a phone
 notification with **Taken** and **Skip** buttons; if you're home (your
 person is *home*) the Echo says it too. Still open after 30 minutes? One
-more reminder. Doses nobody marked count as missed at the end of the day.
+more reminder on your phone (the Echo says each dose only once). Doses nobody marked count as missed at the end of the day.
 
 The Echo uses `script.say` if you have one (a script taking `message`,
 `lines` per personality and `to: echo`); otherwise the first

@@ -444,6 +444,7 @@ class MedsMixin:
 
     def _meds_init(self):
         self.meds_data = None
+        self._spoken = set()       # doses the Echo already announced ("med_id|due")
 
     async def meds_part(self):
         o = await self.run(overview, self.db)
@@ -468,9 +469,17 @@ class MedsMixin:
         return None
 
     async def _speak(self, dose, second=False):
+        """Announce a dose on the Echo, once: the 30-minute follow-up only speaks
+        if the first reminder couldn't (e.g. you weren't home yet)."""
         echo = self._echo_target()
         if not echo:
             return
+        key = f"{dose['med_id']}|{dose['due']}"
+        if key in self._spoken:
+            return
+        if len(self._spoken) > 500:
+            self._spoken.clear()
+        self._spoken.add(key)
         normal, lines = spoken(dose, second, self.lang)
         try:
             if echo["via"] == "say":
